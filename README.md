@@ -90,6 +90,48 @@ Desktop Mode → Steam → *Games → Add a Non-Steam Game to My Library* → *B
 In the shortcut's *Properties*, rename it "Lifeline" and add launch options such as `--skip-tutorial --fullscreen`.
 To move push-to-talk to another button, remap that button to **B** in the Steam controller layout.
 
+## Launcher (controller-friendly installer + QoL toggles)
+`steam-machine/launcher/` is a small Python + pygame app that works with a controller in SteamOS Game Mode.
+pygame's wheel bundles SDL2, so `launcher.sh` creates a per-user venv in `~/lifeline-recomp/launcher-venv`
+on first start (no root; falls back to the `lifeline-build` distrobox).
+
+**Controls:** D-pad / left stick = move, **A** = select or toggle, **left/right** = change a value, **START** = play, **B** = back/quit.
+Keyboard works too (arrows, Enter, Esc).
+
+**What it does**
+- **Install / update from ISO:** pick your ISO (cycles through `*.iso` in `~/Downloads` and `~`), then it runs `build.sh`
+  (build, voice assets, Vosk lib + small model) and `voice/tools/build_aliases.py`, showing `build-progress.log` live.
+  Your `voice-assets/aliases.local.tsv` is never overwritten.
+- **Download large speech model:** optional `vosk-model-en-us-0.22` (~1.8 GB) into `~/lifeline-recomp/vosk/`.
+- **Launch:** PLAY (continue), New game, and toggles for skip tutorial, fullscreen, debug logs, voice off.
+- **QoL toggles**, saved to `~/lifeline-recomp/config.ini` and read by `run.sh` each launch (an env var you set yourself wins):
+
+| # | Toggle | config key | run.sh passes | Status |
+|---|---|---|---|---|
+| 1 | On-screen voice readout | `voice_readout` | `PS2_VOICE_OVERLAY=1` | coming soon |
+| 2 | Voice tuning config | `voice_tuning` | `PS2_VOICE_CONFIG=~/lifeline-recomp/voice.ini` | coming soon |
+| 3 | Internal resolution 1x/2x/3x | `resolution_scale` | `PS2_SCALE=<n>` | **works** (AA coming soon) |
+| 4 | Save-anywhere slots | `save_slots` | `PS2_SAVE_SLOTS=1` | coming soon |
+| 5 | Always-on listening | `always_on` | `PS2_VOICE_ALWAYS_ON=1` | coming soon |
+| 6 | Large speech model | `large_model` | `PS2_VOICE_VOSK_MODEL=.../vosk-model-en-us-0.22` (if downloaded) | coming soon |
+| 7 | Native widescreen | `widescreen` | `PS2_WIDESCREEN=1` | coming soon |
+| 8 | Faster loads / skip FMV / 60fps | `faster_loads` | `PS2_FAST_LOADS=1` | coming soon |
+
+"Coming soon" items are greyed out in the launcher; their variables are reserved and ignored by the current build.
+
+**First start (Desktop Mode, Konsole):**
+```sh
+~/lifeline-kit/steam-machine/launcher/launcher.sh
+```
+After an install it is also copied to `~/lifeline-recomp/launcher/launcher.sh`.
+
+**Add to Steam:** Desktop Mode → Steam → *Games → Add a Non-Steam Game* → *Browse* → `~/lifeline-recomp/launcher/launcher.sh`
+(or the kit copy) → Add, rename it "Lifeline". In Game Mode it opens fullscreen; PLAY starts `run.sh` with your settings and
+returns to the launcher if the game exits with an error.
+
+**Headless checks:** `launcher.sh --print-config`, `launcher.sh --dry-run`, `launcher.sh --set qol.resolution_scale=2`,
+and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.sh would pass and exits.
+
 ## Known limits
 - Accuracy depends on the small Vosk model and your mic. Natural-sentence matching was tuned with synthetic voices plus one player's sessions.
 - A misheard word can still map to a different command that's valid in the current room.
@@ -107,6 +149,7 @@ To move push-to-talk to another button, remap that button to **B** in the Steam 
 | `voice/` | Voice module that replaces the original recognizer (Vosk backend, SDL mic, phrase-table reader, natural-sentence matcher) |
 | `voice/tools/` | `fat.py` / `arcx.py` extract the phrase tables from your ISO; `build_aliases.py` builds the local alias table |
 | `steam-machine/` | `build.sh`, `run.sh`, `make-skip-state.sh` and kit notes |
+| `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 
 ## License
 Our code is MIT (see `LICENSE`). ps2-web-recomp is MIT and is not vendored: `build.sh` clones it and applies our patches.
