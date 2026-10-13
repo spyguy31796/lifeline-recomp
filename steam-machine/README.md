@@ -41,7 +41,7 @@ What it does: creates distrobox `lifeline-build` (archlinux) → installs git cm
 
 ## Launch
 1. Test from Konsole: `~/lifeline-recomp/run.sh` (window, memcard `~/lifeline-recomp/saves/lifeline.ps2`).
-   Debug: `~/lifeline-recomp/run.sh --debug` sets `PS2_VOICE_DEBUG=1` and `PS2_VOICE_LOG=~/lifeline-recomp/logs/voice.log`, and saves stderr to `logs/run-<ts>.log`.
+   Debug (voice log is off by default since the launcher PR): `~/lifeline-recomp/run.sh --debug` sets `PS2_VOICE_DEBUG=1` and `PS2_VOICE_LOG=~/lifeline-recomp/logs/voice.log`, and saves stderr to `logs/run-<ts>.log`.
 2. Add to Steam: Steam (Desktop Mode) → *Games → Add a Non-Steam Game* → *Browse* → `/home/deck/lifeline-recomp/run.sh` → Add.
    For fullscreen, set launch options in Properties to `--fullscreen`, or `--debug --fullscreen` for debug.
 3. Return to Game Mode and launch "run.sh". Rename it "Lifeline" in Properties.
@@ -54,7 +54,7 @@ To move talk to a back grip or trigger: Steam → game → Controller layout →
 ## Mic / voice status
 - `voice/` now has a Vosk backend (`vosk_recognizer.cpp`, dlopen) plus an SDL audio source. If libvosk or the model is missing, it falls back to the null recognizer.
   run.sh sets `PS2_VOICE_VOSK_MODEL`, `PS2_VOICE_VOSK_LIB` and `PS2_VOICE_ASSETS` from `lifeline.env`. It never sets `PS2_VOICE_WAV_*` or `PS2_VOICE_INJECT`.
-- SDL capture uses `SDL_AUDIODRIVER=pipewire,pulseaudio`.
+- SDL capture uses `SDL_AUDIODRIVER=pipewire,pulseaudio,alsa` unless you already set `SDL_AUDIODRIVER`.
 
 ## Performance caveat
 On the dev box (no GPU) the runner managed about 10–13 fps, and VU microprograms are interpreted. Device speed is unmeasured.

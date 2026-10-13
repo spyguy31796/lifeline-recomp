@@ -74,14 +74,31 @@ phase "relink with voice module"
 # --- Vosk 0.3.45 + model (fetched on the device, never bundled; loaded at run time) ---
 VOSK_VER=0.3.45; MODEL=vosk-model-small-en-us-0.15      # model: Apache-2.0
 VOSK_DIR="$WORK/vosk"; mkdir -p "$VOSK_DIR"
+# sha256 of the exact files we tested (computed from the real downloads on 2026-10-13)
+WHEEL=vosk-$VOSK_VER-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl
+WHEEL_SHA=25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f
+MODEL_SHA=30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498
+need_space() { local avail; avail=$(df -Pk "$1" | awk 'NR==2{print $4}'); [ "$avail" -ge $(($2*1024)) ] || { echo "not enough free space in $1: need ${2} MB" >&2; exit 1; }; }
+fetch() {  # url dest sha256 -> verified file at dest (.part removed on any failure)
+  local part="$2.part"; rm -f "$part"
+  if ! curl -fL -o "$part" "$1"; then rm -f "$part"; echo "download failed: $1" >&2; return 1; fi
+  if ! echo "$3  $part" | sha256sum -c --quiet -; then rm -f "$part"; echo "sha256 mismatch: $1" >&2; return 1; fi
+  mv "$part" "$2"
+}
 if [ -z "${SKIP_VOSK:-}" ]; then
   if [ ! -f "$VOSK_DIR/vosk/libvosk.so" ]; then
-    python3 -m pip download --no-deps --only-binary=:all: --platform manylinux2010_x86_64 \
-      --python-version 3 "vosk==$VOSK_VER" -d "$VOSK_DIR"      # PyPI wheel carries libvosk.so
-    unzip -oq "$VOSK_DIR"/vosk-$VOSK_VER-*.whl 'vosk/libvosk.so' -d "$VOSK_DIR"
+    need_space "$VOSK_DIR" 40
+    fetch "https://files.pythonhosted.org/packages/py3/v/vosk/$WHEEL" "$VOSK_DIR/$WHEEL" "$WHEEL_SHA" 2>/dev/null || true
+    if [ ! -f "$VOSK_DIR/$WHEEL" ]; then   # fall back to pip's resolver, still verified
+      python3 -m pip download --no-deps --only-binary=:all: --platform manylinux2010_x86_64 \
+        --python-version 3 "vosk==$VOSK_VER" -d "$VOSK_DIR"      # PyPI wheel carries libvosk.so
+      echo "$WHEEL_SHA  $VOSK_DIR/$WHEEL" | sha256sum -c --quiet - || { rm -f "$VOSK_DIR/$WHEEL"; echo "sha256 mismatch: $WHEEL" >&2; exit 1; }
+    fi
+    unzip -oq "$VOSK_DIR/$WHEEL" 'vosk/libvosk.so' -d "$VOSK_DIR"
   fi
   if [ ! -d "$VOSK_DIR/$MODEL" ]; then
-    curl -fL -o "$VOSK_DIR/$MODEL.zip" "https://alphacephei.com/vosk/models/$MODEL.zip"
+    need_space "$VOSK_DIR" 200
+    fetch "https://alphacephei.com/vosk/models/$MODEL.zip" "$VOSK_DIR/$MODEL.zip" "$MODEL_SHA" || exit 1
     unzip -oq "$VOSK_DIR/$MODEL.zip" -d "$VOSK_DIR"
   fi
 fi
