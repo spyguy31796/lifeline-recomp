@@ -67,7 +67,7 @@ def play_cmd(c, new_game=False):
 
 def play_env(c):
     e = dict(os.environ)
-    if c.getboolean("launch", "voice_off"): e["PS2_VOICE_OFF"] = "1"
+    if c.getboolean("launch", "voice_off"): e.setdefault("PS2_VOICE_OFF", "1")   # exported env wins (as in run.sh)
     return e
 
 
@@ -183,8 +183,11 @@ def download_large(job, c):
             job.log("sha256 mismatch (got %s); download discarded" % h.hexdigest()); return False
         job.log("Checksum OK. Unpacking ...")
         tmpd = os.path.join(d, ".unpack-" + LARGE_MODEL); shutil.rmtree(tmpd, ignore_errors=True)
-        zipfile.ZipFile(z).extractall(tmpd)
-        os.replace(os.path.join(tmpd, LARGE_MODEL), os.path.join(d, LARGE_MODEL)); shutil.rmtree(tmpd, ignore_errors=True)
+        try:
+            zipfile.ZipFile(z).extractall(tmpd)
+            os.replace(os.path.join(tmpd, LARGE_MODEL), os.path.join(d, LARGE_MODEL))
+        finally:
+            shutil.rmtree(tmpd, ignore_errors=True)
         job.log("Done: " + os.path.join(d, LARGE_MODEL)); return True
     finally:
         if os.path.exists(z): os.remove(z)
