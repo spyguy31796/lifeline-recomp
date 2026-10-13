@@ -1,0 +1,135 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1420ded..e2c7a79 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -55,7 +55,8 @@ add_library(ps2runtime STATIC
+     runtime/src/iop/io.cpp
+     runtime/src/iop/cdvd.cpp
+     runtime/src/iop/sif.cpp
+-    runtime/src/iop/cdvdfsv.cpp)
++    runtime/src/iop/cdvdfsv.cpp
++    runtime/src/iop/usbmic.cpp)
+ target_include_directories(ps2runtime PUBLIC runtime/include)
+ target_compile_options(ps2runtime PRIVATE -Wall -Wextra)
+ 
+diff --git a/runtime/src/iop/kernel.hpp b/runtime/src/iop/kernel.hpp
+index 43159af..5847269 100644
+--- a/runtime/src/iop/kernel.hpp
++++ b/runtime/src/iop/kernel.hpp
+@@ -117,6 +117,7 @@ void install_libraries();
+ void vblank_edge(bool start);
+ void install_sif();
+ void install_cdvdfsv();
++void install_usbmic();
+ void install_cdvd();
+ void install_io();
+ 
+diff --git a/runtime/src/iop/sif.cpp b/runtime/src/iop/sif.cpp
+index e12fa3f..557a59d 100644
+--- a/runtime/src/iop/sif.cpp
++++ b/runtime/src/iop/sif.cpp
+@@ -424,6 +424,13 @@ void install_iop_side() {
+     def("sifcmd", 18, "sceSifCheckStatRpc", [](iop::Cpu &c) { c.r[2] = iop::read32(arg(c, 0)) ? 1u : 0u; });
+     def("sifcmd", 17, "sceSifRegisterRpc", [](iop::Cpu &c) {
+         const std::uint32_t sd = arg(c, 0), id = arg(c, 1);
++        const auto hle = g_servers.find(id);
++        if (hle != g_servers.end() && hle->second.hle) {
++            // An HLE server answers for this id; the module's own server stays unused.
++            iop::write32(sd + 0, id);
++            if (iop::kernel::g_trace_modules) std::fprintf(stderr, "[sif] server 0x%08X kept as HLE\n", id);
++            return;
++        }
+         Server s;
+         s.sd = sd;
+         s.func = arg(c, 2);
+@@ -791,6 +798,7 @@ void install_sif() {
+     sif::install_iop_side();
+     sif::install_servers();
+     install_cdvdfsv();
++    install_usbmic();
+ }
+ 
+ }
+diff --git a/runtime/src/iop/usbmic.cpp b/runtime/src/iop/usbmic.cpp
+new file mode 100644
+index 0000000..f44db41
+--- /dev/null
++++ b/runtime/src/iop/usbmic.cpp
+@@ -0,0 +1,60 @@
++// HLE of the SCE USB microphone driver's RPC server (usbmic.irx, "USB
++// Microphone Driver Ver 1.10", server 0x80000213). The runtime has no USB
++// host or device emulation, so the real driver never sees a microphone and
++// the game stops at its "USB mic is not connected" screen. This server
++// answers in its place and reports a microphone that is attached and
++// recording. No audio reaches the EE yet, which the game treats as silence.
++//
++// Requests carry their command in word 2 of the send buffer and the reply is
++// the same buffer with word 0 = driver state (0 none, 1 attached, 2 recording,
++// 4 detached) and word 5 = success flag, as the original server returns it.
++#include "kernel.hpp"
++#include "sif.hpp"
++
++#include "ps2/memory.hpp"
++
++#include <cstdio>
++#include <cstdlib>
++#include <algorithm>
++
++namespace ps2::iop::kernel {
++
++namespace {
++
++constexpr std::uint32_t kUsbMicServer = 0x80000213u;
++std::uint32_t g_state = 1;
++
++std::uint32_t ee32(std::uint32_t a) { return load<std::uint32_t>(ps2::g_ram + (a & (ps2::kRamSize - 1))); }
++void set_ee32(std::uint32_t a, std::uint32_t v) { store<std::uint32_t>(ps2::g_ram + (a & (ps2::kRamSize - 1)), v); }
++
++}
++
++void install_usbmic() {
++    if (std::getenv("PS2_NO_USBMIC_HLE")) return;
++    g_state = 1;
++    sif::register_hle_server(kUsbMicServer, [](std::uint32_t, std::uint32_t args, std::uint32_t args_size, std::uint32_t ret, std::uint32_t ret_size) {
++        std::uint32_t w[64] = {};
++        const std::uint32_t n = std::min<std::uint32_t>(args_size, sizeof w) / 4;
++        for (std::uint32_t i = 0; i < n; ++i) w[i] = ee32(args + i * 4);
++        const std::uint32_t cmd = w[2];
++        std::uint32_t ok = 0;
++        switch (cmd) {
++        case 1: // open / start recording
++            if (g_state) { g_state = 2; ok = 1; }
++            break;
++        case 2: // transfer request: nothing captured yet
++            ok = 1;
++            break;
++        default: break;
++        }
++        w[0] = g_state;
++        w[3] = 0;
++        w[5] = ok;
++        if (g_trace_modules) std::fprintf(stderr, "[usbmic] cmd %u -> state %u ok %u\n", cmd, g_state, ok);
++        const std::uint32_t m = std::min<std::uint32_t>(ret_size, sizeof w) / 4;
++        for (std::uint32_t i = 0; i < m; ++i) set_ee32(ret + i * 4, w[i]);
++        return true;
++    });
++}
++
++}
+diff --git a/runtime/src/kernel.cpp b/runtime/src/kernel.cpp
+index a8a6b4d..6ad73f6 100644
+--- a/runtime/src/kernel.cpp
++++ b/runtime/src/kernel.cpp
+@@ -703,7 +703,11 @@ void handle_syscall(Cpu &c, std::uint32_t pc) {
+         break;
+     case 0x79: sif::set_reg(arg(c, 0), arg(c, 1)); ret(c, 0); break;
+     case 0x7A: ret(c, static_cast<std::int32_t>(sif::get_reg(arg(c, 0)))); break;
+-    case 0x7C: ret(c, 0); break;
++    case 0x7C:
++        // Deci2Call. No DECI2 host is attached, so requests to send fail;
++        // otherwise a game's DECI2 tty waits forever for the send to finish.
++        ret(c, arg(c, 0) == 3 ? -1 : 0);
++        break;
+     case 0x7E: ret(c, 0); break;
+     case 0x7F: ret(c, kRamSize); break;
+     default:

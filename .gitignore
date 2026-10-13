@@ -1,0 +1,46 @@
+# NEVER commit game data or anything derived from it.
+*.iso
+*.ISO
+*.bin
+*.img
+*.cue
+*.mdf
+*.elf
+*.ELF
+SLUS_*
+SYSTEM.CNF
+*.FAT
+*.vgp
+*.a
+*.state
+*.ps2
+*.mc2
+*.mcd
+memcards/
+saves/
+voice-assets/
+iso-meta/
+aliases.tsv
+aliases.local.tsv
+aliases.unresolved.txt
+tutorial-queue*.txt
+# upstream checkout, recompiled output, builds
+ps2-web-recomp/
+generated/
+games/
+build/
+ps2run
+# Vosk (fetched at build time, never bundled)
+vosk/
+vosk-model-*/
+*.whl
+*.so
+*.zip
+# logs / local config
+logs/
+*.log
+lifeline.env
+private/
+*.png
+*.wav
+__pycache__/

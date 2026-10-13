@@ -1,0 +1,141 @@
+EE function override mechanism for ps2-web-recomp (tool-tree part only).
+
+The Lifeline voice module is NOT in this patch. Its single source of truth is
+<repo-root>/ourcode/voice/ (MIT). Build with:
+  eerecomp <elf> --overrides <repo-root>/ourcode/voice/overrides.txt --out generated/<name>
+  cmake ... -DPS2_EXTRA_SOURCES="$V/voice_overrides.cpp;$V/vgp.cpp;$V/result_writer.cpp;$V/null_recognizer.cpp"
+  with V=<repo-root>/ourcode/voice
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e2c7a79..f23192d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -56,7 +56,8 @@ add_library(ps2runtime STATIC
+     runtime/src/iop/cdvd.cpp
+     runtime/src/iop/sif.cpp
+     runtime/src/iop/cdvdfsv.cpp
+-    runtime/src/iop/usbmic.cpp)
++    runtime/src/iop/usbmic.cpp
++    runtime/src/overrides.cpp)
+ target_include_directories(ps2runtime PUBLIC runtime/include)
+ target_compile_options(ps2runtime PRIVATE -Wall -Wextra)
+ 
+@@ -104,7 +105,9 @@ if(PS2_GENERATED)
+         return()
+     endif()
+ 
+-    add_executable(ps2run host/main.cpp)
++    set(PS2_EXTRA_SOURCES "" CACHE STRING "Extra per-game sources (e.g. EE overrides) linked into ps2run")
++    add_executable(ps2run host/main.cpp ${PS2_EXTRA_SOURCES})
++    target_include_directories(ps2run PRIVATE runtime/include)
+     target_link_libraries(ps2run PRIVATE ps2game ps2runtime)
+     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+         target_sources(ps2run PRIVATE host/profile.cpp)
+diff --git a/recomp/codegen.cpp b/recomp/codegen.cpp
+index 3ed6fe4..5a5d204 100644
+--- a/recomp/codegen.cpp
++++ b/recomp/codegen.cpp
+@@ -212,6 +212,7 @@ private:
+                 flush();
+                 out_ << label(a) << ":\n";
+             }
++            if (options_.overrides.count(a)) line(std::format("if (ee_override(c, {})) return;", pc(a)));
+             if (options_.probes.count(a)) line(std::format("probe(c, {});", pc(a)));
+             const Insn i = at(a);
+             const Flow fl = flow(i.op);
+diff --git a/recomp/codegen.hpp b/recomp/codegen.hpp
+index 26e71b8..f7ce1f5 100644
+--- a/recomp/codegen.hpp
++++ b/recomp/codegen.hpp
+@@ -16,6 +16,7 @@ struct CodegenOptions {
+     std::string output;
+     std::uint32_t unit_bits = 14;
+     std::set<std::uint32_t> probes;
++    std::set<std::uint32_t> overrides;
+ };
+ 
+ struct Translation {
+diff --git a/recomp/main.cpp b/recomp/main.cpp
+index a448dee..97fbcac 100644
+--- a/recomp/main.cpp
++++ b/recomp/main.cpp
+@@ -91,7 +91,7 @@ std::vector<Snr2Module> read_modules(const std::string &dir) {
+ }
+ 
+ int usage() {
+-    std::fprintf(stderr, "usage: eerecomp <elf> [--entries file] [--modules dir] [--probes file] [--out dir] [--stats]\n");
++    std::fprintf(stderr, "usage: eerecomp <elf> [--entries file] [--modules dir] [--probes file] [--overrides file] [--out dir] [--stats]\n");
+     return 2;
+ }
+ 
+@@ -99,7 +99,7 @@ int usage() {
+ 
+ int main(int argc, char **argv) {
+     if (argc < 2) return usage();
+-    std::string elf_path = argv[1], entries_path, out, probes_path, modules_dir;
++    std::string elf_path = argv[1], entries_path, out, probes_path, modules_dir, overrides_path;
+     bool stats = false;
+     for (int i = 2; i < argc; ++i) {
+         const std::string arg = argv[i];
+@@ -107,6 +107,7 @@ int main(int argc, char **argv) {
+         else if (arg == "--stats") stats = true;
+         else if (arg == "--out" && i + 1 < argc) out = argv[++i];
+         else if (arg == "--probes" && i + 1 < argc) probes_path = argv[++i];
++        else if (arg == "--overrides" && i + 1 < argc) overrides_path = argv[++i];
+         else if (arg == "--modules" && i + 1 < argc) modules_dir = argv[++i];
+         else return usage();
+     }
+@@ -147,6 +148,8 @@ int main(int argc, char **argv) {
+             options.output = out;
+             if (!probes_path.empty())
+                 for (std::uint32_t a : read_entries(probes_path).main) options.probes.insert(a);
++            if (!overrides_path.empty())
++                for (std::uint32_t a : read_entries(overrides_path).main) options.overrides.insert(a);
+             generate(translations, options);
+         }
+     } catch (const std::exception &error) {
+diff --git a/runtime/include/ps2/generated.hpp b/runtime/include/ps2/generated.hpp
+index 3d473fb..9310715 100644
+--- a/runtime/include/ps2/generated.hpp
++++ b/runtime/include/ps2/generated.hpp
+@@ -43,6 +43,11 @@ void breakpoint(Cpu &c, std::uint32_t pc);
+ void trap(Cpu &c, std::uint32_t pc);
+ void stop(Cpu &c, std::uint32_t pc, const char *what);
+ void probe(Cpu &c, std::uint32_t pc);
++// Per-game EE function override. Returns true if the override handled the call
++// (it must then set c.pc to the return address); false runs the original code.
++bool ee_override(Cpu &c, std::uint32_t pc);
++using OverrideFn = bool (*)(Cpu &c, std::uint32_t pc);
++void register_override(std::uint32_t pc, OverrideFn fn);
+ 
+ std::uint32_t mfc0(Cpu &c, std::uint32_t reg, std::uint32_t sel);
+ void mtc0(Cpu &c, std::uint32_t reg, std::uint32_t value);
+diff --git a/runtime/src/overrides.cpp b/runtime/src/overrides.cpp
+new file mode 100644
+index 0000000..f70898e
+--- /dev/null
++++ b/runtime/src/overrides.cpp
+@@ -0,0 +1,23 @@
++// Registry for per-game EE function overrides (see eerecomp --overrides).
++#include "ps2/generated.hpp"
++
++#include <unordered_map>
++
++namespace ps2 {
++
++namespace {
++std::unordered_map<std::uint32_t, OverrideFn> &table() {
++    static std::unordered_map<std::uint32_t, OverrideFn> t;
++    return t;
++}
++}
++
++void register_override(std::uint32_t pc, OverrideFn fn) { table()[pc] = fn; }
++
++bool ee_override(Cpu &c, std::uint32_t pc) {
++    auto &t = table();
++    const auto it = t.find(pc);
++    return it != t.end() && it->second(c, pc);
++}
++
++}
