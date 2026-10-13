@@ -93,7 +93,7 @@ To move push-to-talk to another button, remap that button to **B** in the Steam 
 ## Launcher (controller-friendly installer + QoL toggles)
 `steam-machine/launcher/` is a small Python + pygame app that works with a controller in SteamOS Game Mode.
 pygame's wheel bundles SDL2, so `launcher.sh` creates a per-user venv in `~/lifeline-recomp/launcher-venv`
-on first start (no root; falls back to `pip install --user`). **The first run needs network** so pip can download pygame;
+on first start (no root; falls back to `pip install --user`). **The first run needs network** so pip can download pygame-ce (classic pygame has no wheel for SteamOS's Python 3.14);
 if both fail it shows an error and the details are in `~/lifeline-recomp/launcher.log`.
 
 **Controls:** D-pad / left stick = move, **A** = select or toggle, **left/right** = change a value, **START** = play, **B** = back/quit.
