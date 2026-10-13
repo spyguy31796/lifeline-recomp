@@ -77,12 +77,12 @@ All commands run in Desktop Mode → Konsole as your normal user. Nothing needs 
    ~/lifeline-recomp/run.sh                   # new game (windowed)
    ~/lifeline-recomp/run.sh --skip-tutorial   # start in the first room from saves/room001.state
    ~/lifeline-recomp/run.sh --fullscreen
-   ~/lifeline-recomp/run.sh --debug           # also saves stderr to logs/run-<time>.log
+   ~/lifeline-recomp/run.sh --debug           # voice log on + stderr to logs/run-<time>.log
    ```
    Options can be combined. Any extra arguments are passed through to `ps2run`.
 3. **Hold Circle / B while you speak** and release when you're done. Square advances text, START pauses.
 4. Talk normally, in full sentences or short commands; the words the game accepts change with each room.
-5. Every utterance is logged to `~/lifeline-recomp/logs/voice.log`: what Vosk heard, its confidence, and whether it matched
+5. With debug on (the launcher's default, or `run.sh --debug`), every utterance is logged to `~/lifeline-recomp/logs/voice.log`: what Vosk heard, its confidence, and whether it matched
    exactly, loosely, or why it was rejected. Check it when a command doesn't work.
 
 ### Add to Steam (Game Mode)
@@ -93,7 +93,8 @@ To move push-to-talk to another button, remap that button to **B** in the Steam 
 ## Launcher (controller-friendly installer + QoL toggles)
 `steam-machine/launcher/` is a small Python + pygame app that works with a controller in SteamOS Game Mode.
 pygame's wheel bundles SDL2, so `launcher.sh` creates a per-user venv in `~/lifeline-recomp/launcher-venv`
-on first start (no root; falls back to the `lifeline-build` distrobox).
+on first start (no root; falls back to `pip install --user`). **The first run needs network** so pip can download pygame;
+if both fail it shows an error and the details are in `~/lifeline-recomp/launcher.log`.
 
 **Controls:** D-pad / left stick = move, **A** = select or toggle, **left/right** = change a value, **START** = play, **B** = back/quit.
 Keyboard works too (arrows, Enter, Esc).
@@ -102,9 +103,13 @@ Keyboard works too (arrows, Enter, Esc).
 - **Install / update from ISO:** pick your ISO (cycles through `*.iso` in `~/Downloads` and `~`), then it runs `build.sh`
   (build, voice assets, Vosk lib + small model) and `voice/tools/build_aliases.py`, showing `build-progress.log` live.
   Your `voice-assets/aliases.local.tsv` is never overwritten.
-- **Download large speech model:** optional `vosk-model-en-us-0.22` (~1.8 GB) into `~/lifeline-recomp/vosk/`.
+- **Download large speech model:** optional `vosk-model-en-us-0.22` (~1.8 GB zip) into `~/lifeline-recomp/vosk/`. It checks free space first,
+  verifies the sha256, and deletes partial downloads on failure. `build.sh` pins and verifies the sha256 of the Vosk wheel and small model the same way.
 - **Launch:** PLAY (continue), New game, and toggles for skip tutorial, fullscreen, debug logs, voice off.
-- **QoL toggles**, saved to `~/lifeline-recomp/config.ini` and read by `run.sh` each launch (an env var you set yourself wins):
+  **Debug logs is ON in a freshly created `config.ini`** so `logs/voice.log` keeps being written while voice is tuned.
+  `run.sh` on its own now defaults to `PS2_VOICE_DEBUG=0`; `--debug` turns the voice log (and the stderr log) on.
+- **QoL toggles**, saved to `~/lifeline-recomp/config.ini` and read by `run.sh` each launch. Precedence: a variable already in your environment > `config.ini` > `lifeline.env`
+  (e.g. `PS2_VOICE_OFF=0` beats `voice_off = 1`; a `PS2_VOICE_VOSK_MODEL` you export is never replaced by the large-model toggle):
 
 | # | Toggle | config key | run.sh passes | Status |
 |---|---|---|---|---|

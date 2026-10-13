@@ -10,7 +10,7 @@ Headless helpers (no window):
   lifeline_launcher.py --set qol.resolution_scale=2 [--set ...]   edit config and exit
 Contains only our code; never bundles game data.
 """
-import configparser, glob, os, shlex, subprocess, sys, threading, time, urllib.request, zipfile, shutil
+import argparse, configparser, hashlib, glob, os, shlex, subprocess, sys, threading, time, urllib.request, zipfile, shutil
 
 HOME = os.path.expanduser("~")
 WORK = os.environ.get("LIFELINE_WORK", os.path.join(HOME, "lifeline-recomp"))
@@ -18,6 +18,9 @@ CFG = os.path.join(WORK, "config.ini")
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ISO = os.path.join(HOME, "Downloads", "Life Line (USA).iso")
 LARGE_MODEL = "vosk-model-en-us-0.22"
+# sha256 of the zip we tested (computed from the real download on 2026-10-13)
+LARGE_MODEL_SHA = "47f9a81ebb039dbb0bd319175c36ac393c0893b796c2b6303e64cf58c27b69f6"
+LARGE_MODEL_NEED_MB = 1800 + 2900   # zip + unpacked
 SMALL_MODEL = "vosk-model-small-en-us-0.15"
 
 # key, label, kind ('bool' or ('choice', values)), available now?, one-line help
@@ -33,7 +36,7 @@ QOL = [
 ]
 LAUNCH = [("skip_tutorial", "Skip tutorial (needs saves/room001.state)"),
           ("fullscreen", "Fullscreen"), ("debug", "Debug logs"), ("voice_off", "Voice off (PS2_VOICE_OFF)")]
-DEFAULTS = {"launch": {"skip_tutorial": "0", "fullscreen": "1", "debug": "0", "voice_off": "0"},
+DEFAULTS = {"launch": {"skip_tutorial": "0", "fullscreen": "1", "debug": "1", "voice_off": "0"},
             "qol": {k: ("1" if k == "resolution_scale" else "0") for k, *_ in QOL},
             "paths": {"iso": DEFAULT_ISO, "kit": os.path.dirname(HERE)}}
 
@@ -87,10 +90,15 @@ def find_isos(c):
 class Job:
     def __init__(self, title, fn):
         self.title, self.lines, self.done, self.ok = title, [], False, None
+        self.lock = threading.Lock()
         threading.Thread(target=self._run, args=(fn,), daemon=True).start()
 
     def log(self, s):
-        self.lines.append(s.rstrip()); self.lines[:] = self.lines[-200:]
+        with self.lock:
+            self.lines.append(s.rstrip()); self.lines[:] = self.lines[-400:]
+
+    def tail(self, n):
+        with self.lock: return list(self.lines[-n:])
 
     def _run(self, fn):
         try: self.ok = bool(fn(self))
@@ -99,16 +107,30 @@ class Job:
 
 
 def _stream(job, cmd, progress=None):
+    """Run cmd with stderr merged into stdout. With a progress file, show its phase lines while
+    running; on failure always show the last lines of the command's own output."""
     job.log("$ " + " ".join(shlex.quote(x) for x in cmd))
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
     seen = len(open(progress, errors="replace").read().splitlines()) if progress and os.path.exists(progress) else 0
+    out = []
     for line in p.stdout:
-        if progress and os.path.exists(progress):      # prefer the compact phase log for the screen
+        out.append(line.rstrip()); out[:] = out[-40:]
+        if progress and os.path.exists(progress):
             with open(progress, errors="replace") as f: pl = f.read().splitlines()
             for l in pl[seen:]: job.log(l)
             seen = len(pl)
         elif not progress: job.log(line)
-    return p.wait() == 0
+    ok = p.wait() == 0
+    if not ok:
+        job.log("--- failed (exit %d), last output:" % p.returncode)
+        for l in out[-20:]: job.log(l)
+    return ok
+
+
+def _write_atomic(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f: f.write(data); f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 
 def install(job, c):
@@ -116,41 +138,56 @@ def install(job, c):
     if not os.path.isfile(iso): job.log("ISO not found: " + iso); return False
     local = os.path.join(WORK, "voice-assets", "aliases.local.tsv")
     keep = open(local, "rb").read() if os.path.exists(local) else None
-    prog = os.path.join(WORK, "build-progress.log")
-    job.log("Building from your ISO (progress: build-progress.log, full: build.log)")
-    if not _stream(job, ["bash", os.path.join(kit, "build.sh"), iso, WORK], progress=prog):
-        job.log("build.sh failed; see " + os.path.join(WORK, "build.log")); return False
-    job.log("Building spoken-form aliases ...")
-    tool = os.path.join(os.path.dirname(kit), "voice", "tools", "build_aliases.py")
-    cmd = ["python3", tool, "--assets", os.path.join(WORK, "voice-assets"), "--model", os.path.join(WORK, "vosk", SMALL_MODEL)]
-    if shutil.which("distrobox") and not os.path.exists("/run/.containerenv"): cmd = ["distrobox", "enter", "lifeline-build", "--"] + cmd
-    ok = _stream(job, cmd)
-    if keep is not None and (not os.path.exists(local) or open(local, "rb").read() != keep):
-        open(local, "wb").write(keep); job.log("restored aliases.local.tsv")
-    inst = os.path.join(WORK, "launcher"); os.makedirs(inst, exist_ok=True)
-    for f in ("lifeline_launcher.py", "launcher.sh"):
-        shutil.copy2(os.path.join(HERE, f), os.path.join(inst, f))
-    shutil.copy2(os.path.join(kit, "run.sh"), os.path.join(WORK, "run.sh"))
-    job.log("Done." if ok else "Aliases step failed (game still playable).")
-    return True
+    try:
+        prog = os.path.join(WORK, "build-progress.log")
+        job.log("Building from your ISO (progress: build-progress.log, full: build.log)")
+        if not _stream(job, ["bash", os.path.join(kit, "build.sh"), iso, WORK], progress=prog):
+            job.log("build.sh failed; full log: " + os.path.join(WORK, "build.log")); return False
+        job.log("Building spoken-form aliases ...")
+        tool = os.path.join(os.path.dirname(kit), "voice", "tools", "build_aliases.py")
+        cmd = ["python3", tool, "--assets", os.path.join(WORK, "voice-assets"), "--model", os.path.join(WORK, "vosk", SMALL_MODEL)]
+        if shutil.which("distrobox") and not os.path.exists("/run/.containerenv"): cmd = ["distrobox", "enter", "lifeline-build", "--"] + cmd
+        ok = _stream(job, cmd)
+        shutil.copy2(os.path.join(kit, "run.sh"), os.path.join(WORK, "run.sh"))
+        inst = os.path.join(WORK, "launcher"); os.makedirs(inst, exist_ok=True)
+        for f in ("lifeline_launcher.py", "launcher.sh"):
+            shutil.copy2(os.path.join(HERE, f), os.path.join(inst, f))
+        job.log("Done." if ok else "Aliases step failed (game still playable).")
+        return True
+    finally:   # never lose the user's own alias fixes, whatever happened above
+        if keep is not None and (not os.path.exists(local) or open(local, "rb").read() != keep):
+            os.makedirs(os.path.dirname(local), exist_ok=True)
+            _write_atomic(local, keep); job.log("restored aliases.local.tsv")
 
 
 def download_large(job, c):
     d = os.path.join(WORK, "vosk"); os.makedirs(d, exist_ok=True)
     if os.path.isdir(os.path.join(d, LARGE_MODEL)): job.log("Already downloaded."); return True
+    free = shutil.disk_usage(d).free >> 20
+    if free < LARGE_MODEL_NEED_MB:
+        job.log("Not enough free space: %d MB free, need ~%d MB" % (free, LARGE_MODEL_NEED_MB)); return False
     url = "https://alphacephei.com/vosk/models/%s.zip" % LARGE_MODEL
     z = os.path.join(d, LARGE_MODEL + ".zip.part")
     job.log("Downloading " + url)
-    with urllib.request.urlopen(url) as r, open(z, "wb") as f:
-        tot, got, last = int(r.headers.get("Content-Length") or 0), 0, 0
-        while True:
-            b = r.read(1 << 20)
-            if not b: break
-            f.write(b); got += len(b)
-            if time.time() - last > 1:
-                last = time.time(); job.log("  %d MB%s" % (got >> 20, " / %d MB" % (tot >> 20) if tot else ""))
-    job.log("Unpacking ..."); zipfile.ZipFile(z).extractall(d); os.remove(z)
-    job.log("Done: " + os.path.join(d, LARGE_MODEL)); return True
+    try:
+        h = hashlib.sha256()
+        with urllib.request.urlopen(url, timeout=60) as r, open(z, "wb") as f:
+            tot, got, last = int(r.headers.get("Content-Length") or 0), 0, 0
+            while True:
+                b = r.read(1 << 20)
+                if not b: break
+                f.write(b); h.update(b); got += len(b)
+                if time.time() - last > 1:
+                    last = time.time(); job.log("  %d MB%s" % (got >> 20, " / %d MB" % (tot >> 20) if tot else ""))
+        if h.hexdigest() != LARGE_MODEL_SHA:
+            job.log("sha256 mismatch (got %s); download discarded" % h.hexdigest()); return False
+        job.log("Checksum OK. Unpacking ...")
+        tmpd = os.path.join(d, ".unpack-" + LARGE_MODEL); shutil.rmtree(tmpd, ignore_errors=True)
+        zipfile.ZipFile(z).extractall(tmpd)
+        os.replace(os.path.join(tmpd, LARGE_MODEL), os.path.join(d, LARGE_MODEL)); shutil.rmtree(tmpd, ignore_errors=True)
+        job.log("Done: " + os.path.join(d, LARGE_MODEL)); return True
+    finally:
+        if os.path.exists(z): os.remove(z)
 
 
 # ---------------- UI ----------------
@@ -198,7 +235,8 @@ def run_ui():
     import pygame
     os.environ.setdefault("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", "1")
     pygame.init(); pygame.joystick.init()
-    full = os.environ.get("SteamDeck") == "1" or os.environ.get("XDG_CURRENT_DESKTOP") == "gamescope" or "--fullscreen" in sys.argv
+    full = (os.environ.get("SteamDeck") == "1" or os.environ.get("XDG_CURRENT_DESKTOP") == "gamescope"
+            or bool(os.environ.get("GAMESCOPE_WAYLAND_DISPLAY")) or "--fullscreen" in sys.argv)
     scr = pygame.display.set_mode((1280, 800), pygame.FULLSCREEN if full else pygame.RESIZABLE)
     pygame.display.set_caption("Lifeline Recomp Launcher"); pygame.mouse.set_visible(False)
     pads = {}
@@ -256,14 +294,21 @@ def run_ui():
             elif name == "down" and not job: sel = (sel + 1) % n
             else: r = act(name)
             if r == "quit": return 0
-            if r == "relaunch":
+            if r == "relaunch":   # game exited with an error: back to the menu, drop presses made in-game
+                pygame.display.init(); pygame.joystick.quit(); pygame.joystick.init(); pads.clear()
                 scr = pygame.display.set_mode((1280, 800), pygame.FULLSCREEN if full else pygame.RESIZABLE)
+                pygame.mouse.set_visible(False)
+                for i in range(pygame.joystick.get_count()):
+                    try: pads[i] = pygame._sdl2.controller.Controller(i)
+                    except Exception: pads[i] = pygame.joystick.Joystick(i)
+                pygame.event.clear(); rep = time.time() + 0.5
+                break
         W, H = scr.get_size(); scr.fill((12, 14, 18))
         scr.blit(T.render("LIFELINE RECOMP", True, (220, 60, 50)), (60, 30))
         if job:
             scr.blit(F.render(job.title + ("  - running..." if not job.done else ("  - OK" if job.ok else "  - FAILED")), True, (240, 240, 240)), (60, 110))
             y = 160
-            for l in job.lines[-((H - 220) // 30):]:
+            for l in job.tail((H - 220) // 30):
                 scr.blit(S.render(l[:110], True, (180, 190, 200)), (60, y)); y += 30
             if job.done: scr.blit(F.render("A / B: back", True, (120, 200, 120)), (60, H - 60))
         else:
@@ -283,19 +328,27 @@ def run_ui():
         pygame.display.flip(); clock.tick(30)
 
 
-def main():
-    a = sys.argv[1:]
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Lifeline Recomp launcher")
+    ap.add_argument("--set", action="append", default=[], metavar="SECTION.KEY=VALUE", help="edit config.ini and exit")
+    ap.add_argument("--print-config", action="store_true")
+    ap.add_argument("--dry-run", action="store_true", help="print the run.sh command PLAY would run")
+    ap.add_argument("--new-game", action="store_true", help="with --dry-run: the New game command")
+    ap.add_argument("--fullscreen", action="store_true", help="force a fullscreen launcher window")
+    a = ap.parse_args(argv)
     c = load()
-    if "--set" in a:
-        for i, x in enumerate(a):
-            if x == "--set":
-                k, v = a[i + 1].split("=", 1); s, o = k.split(".", 1); c.set(s, o, v)
+    if a.set:
+        for x in a.set:
+            k, sep, v = x.partition("=")
+            sec, dot, opt = k.partition(".")
+            if not sep or not dot or not c.has_section(sec): ap.error("bad --set %r (want section.key=value)" % x)
+            c.set(sec, opt, v)
         save(c); return 0
-    if "--print-config" in a:
+    if a.print_config:
         if not os.path.exists(CFG): save(c)
         print(open(CFG).read()); return 0
-    if "--dry-run" in a:
-        print(" ".join(shlex.quote(x) for x in play_cmd(c, "--new-game" in a))); return 0
+    if a.dry_run:
+        print(" ".join(shlex.quote(x) for x in play_cmd(c, a.new_game))); return 0
     if not os.path.exists(CFG): save(c)
     return run_ui()
 
