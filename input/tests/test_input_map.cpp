@@ -25,6 +25,18 @@ int main() {
     CHECK(!e.empty() && m.src[kCross][0].index == 2 && m.src[kCircle][0].index == 1 && m.src[kLX][0].index == 0);
     e.clear(); CHECK(!parse_map("up=+a", m, e));                   // sign on a button is invalid
     e.clear(); CHECK(!parse_map("down=joy:h0.sideways", m, e));
+    // strtol + bounds for raw joystick indices
+    Source s;
+    CHECK(parse_source("joy:b255", s, e) && s.index == 255);
+    CHECK(!parse_source("joy:b256", s, e)); CHECK(!parse_source("joy:b99999999999999999999", s, e));
+    CHECK(!parse_source("joy:b-1", s, e)); CHECK(!parse_source("joy:b+1", s, e)); CHECK(!parse_source("joy:b 1", s, e));
+    CHECK(!parse_source("joy:b1x", s, e)); CHECK(!parse_source("joy:a", s, e)); CHECK(!parse_source("joy:h.up", s, e));
+    CHECK(parse_source("joy:a3-", s, e) && s.index == 3 && s.sign == -1);
+    CHECK(parse_source("joy:h2.left", s, e) && s.index == 2 && s.hat_mask == 8);
+    // inverted axis rests at 0x80, extremes stay in range
+    CHECK(axis_to_u8(0, false) == 0x80 && axis_to_u8(0, true) == 0x80);
+    CHECK(axis_to_u8(32767, true) == 0x00 && axis_to_u8(-32768, true) == 0xFF && axis_to_u8(-32768, false) == 0x00);
+    CHECK(axis_to_u8(32767, false) == 0xFF);
     int t; CHECK(target_from_name(" Circle ", t) && t == kCircle);
     std::printf(fails ? "%d FAILED\n" : "all input_map tests passed\n", fails);
     return fails != 0;

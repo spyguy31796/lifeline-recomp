@@ -145,7 +145,12 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
 - Sticks take a whole axis: push right (X) or down (Y) to bind normally, the other way to bind it inverted.
 - Saved in `config.ini` under `[bindings]` (no section = the built-in layout). `run.sh` passes it to the game as
   `PS2_INPUT_MAP`; an exported `PS2_INPUT_MAP` wins, and an empty one forces the built-in layout. Headless:
-  `launcher.sh --set "bindings.circle=b, paddle1"`, `launcher.sh --reset-bindings`.
+  `launcher.sh --set "bindings.circle=b, paddle1"` (validated with the same rules as the game; a bad source is
+  rejected), `launcher.sh --reset-bindings`.
+- Editing `config.ini` by hand: inline comments need a space before `#` or `;` (`circle = b, paddle1   # talk`);
+  `run.sh` and the launcher both strip them. Separate several inputs with commas. The keys `,` `;` `=` and `#` can't
+  be bound (they are separators); the capture screen ignores them.
+- Raw joystick indices (`joy:bN`, `joy:aN`, `joy:hN`) must be 0-255; inverted sticks rest at centre like normal ones.
 - Source names: `a b x y back guide start leftstick rightstick leftshoulder rightshoulder dpup dpdown dpleft dpright
   misc1 paddle1-4 touchpad`, axes `leftx lefty rightx righty lefttrigger righttrigger` (`+`/`-` prefix = direction for
   buttons, `~` suffix = inverted for sticks), raw `joy:bN`, `joy:aN+`, `joy:hN.up`, and keyboard `key:<SDL key name>`

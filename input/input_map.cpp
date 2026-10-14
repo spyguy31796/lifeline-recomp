@@ -2,6 +2,8 @@
 #include "input_map.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <climits>
 #include <cstdlib>
 
 namespace lifeline_input {
@@ -22,9 +24,16 @@ std::string trim(std::string s) {
     return s;
 }
 std::string lower(std::string s) { for (auto &c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; }
+// Non-negative decimal index 0..kMaxIndex, whole string, via strtol with range checks.
+constexpr long kMaxIndex = 255;
 bool parse_int(const std::string &s, int &v) {
-    if (s.empty() || !std::all_of(s.begin(), s.end(), [](unsigned char c) { return std::isdigit(c); })) return false;
-    v = std::atoi(s.c_str()); return v < 256;
+    if (s.empty() || !std::isdigit(static_cast<unsigned char>(s[0]))) return false;   // no sign, no spaces
+    errno = 0;
+    char *end = nullptr;
+    const long n = std::strtol(s.c_str(), &end, 10);
+    if (errno == ERANGE || end != s.c_str() + s.size() || n < 0 || n > kMaxIndex) return false;
+    v = static_cast<int>(n);
+    return true;
 }
 template <std::size_t N> int find(const char *(&t)[N], const std::string &n) {
     for (std::size_t i = 0; i < N; ++i) if (n == t[i]) return static_cast<int>(i);
@@ -64,6 +73,13 @@ bool parse_source(const std::string &raw, Source &o, std::string &err) {
     if (int a = find(kAxes, s); a >= 0) { o.kind = Kind::Axis; o.index = a; return true; }
     if (int b = find(kButtons, s); b >= 0 && o.sign == 0 && !o.invert) { o.kind = Kind::Button; o.index = b; return true; }
     err = "unknown source '" + raw + "'"; return false;
+}
+
+int invert_axis(int v) { return v <= -32767 ? 32767 : v == 0 ? 0 : -v; }   // 0 stays 0, so rest stays 0x80
+
+std::uint8_t axis_to_u8(int v, bool invert) {
+    if (invert) v = invert_axis(v);
+    return static_cast<std::uint8_t>(std::clamp((v + 32768) >> 8, 0, 255));
 }
 
 Map default_map() {   // identical to the runner's built-in pad table

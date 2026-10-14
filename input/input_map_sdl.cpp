@@ -50,7 +50,7 @@ int pressed(SDL_GameController *pad, const Uint8 *keys, const Source &s, bool tr
     }
     case Kind::Axis: case Kind::JoyAxis: {
         int v = axis_value(pad, s);
-        if (s.invert) v = -v;
+        if (s.invert) v = invert_axis(v);
         if (s.sign) v *= s.sign;
         const bool trig = s.kind == Kind::Axis && s.index >= SDL_CONTROLLER_AXIS_TRIGGERLEFT;
         if (v <= (trig ? kTriggerThreshold : kDigitalThreshold)) return 0;
@@ -60,7 +60,6 @@ int pressed(SDL_GameController *pad, const Uint8 *keys, const Source &s, bool tr
     return 0;
 }
 
-std::uint8_t to_u8(int v) { return static_cast<std::uint8_t>(std::clamp((v + 32768) >> 8, 0, 255)); }
 }  // namespace
 
 // Called every frame. Keyboard defaults are already in *buttons; we add the pad (and key:) bindings.
@@ -81,8 +80,8 @@ extern "C" bool lifeline_input_remap(SDL_GameController *pad, const Uint8 *keys,
     for (int t = kLX; t < kTargetCount; ++t) {
         if (*out[t - kLX] != 0x80 || m->src[t].empty()) continue;   // keyboard arrows already set the left stick
         int v = 0;
-        for (const Source &s : m->src[t]) { int a = axis_value(pad, s); if (s.invert) a = -a - 1; if (std::abs(a) > std::abs(v)) v = a; }
-        *out[t - kLX] = to_u8(v);
+        for (const Source &s : m->src[t]) { int a = axis_value(pad, s); if (s.invert) a = invert_axis(a); if (std::abs(a) > std::abs(v)) v = a; }
+        *out[t - kLX] = axis_to_u8(v, false);
     }
     return true;
 }

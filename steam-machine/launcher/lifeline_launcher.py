@@ -42,7 +42,7 @@ DEFAULTS = {"launch": {"skip_tutorial": "0", "fullscreen": "1", "debug": "1", "v
 
 
 def load():
-    c = configparser.ConfigParser()
+    c = configparser.ConfigParser(inline_comment_prefixes=("#", ";"))   # ' # note' after a value is a comment
     c.read_dict(DEFAULTS)
     c.read(CFG)
     return c
@@ -351,7 +351,9 @@ def main(argv=None):
             sec, dot, opt = k.partition(".")
             if sec == "bindings" and sep and dot:
                 import bindings
-                if opt not in bindings.DEFAULTS: ap.error("unknown binding %r" % opt)
+                bad = bindings.validate(opt, v)
+                if bad: ap.error("--set bindings.%s: %s" % (opt, bad))
+                v = bindings.strip_comment(v) or "none"
                 bindings.set_binding(c, opt, v); continue
             if not sep or not dot or not c.has_section(sec): ap.error("bad --set %r (want section.key=value)" % x)
             c.set(sec, opt, v)

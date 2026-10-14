@@ -39,5 +39,8 @@ bool parse_source(const std::string &s, Source &out, std::string &err);
 // (bad entries are skipped, the rest still applies).
 bool parse_map(const std::string &spec, Map &out, std::string &err);
 Map default_map();
+// SDL axis value (-32768..32767) -> PS2 stick byte; 0 maps to 0x80 with or without invert.
+int invert_axis(int v);
+std::uint8_t axis_to_u8(int v, bool invert);
 
 }  // namespace lifeline_input

@@ -5,6 +5,8 @@ Config: [bindings] in config.ini, one line per PS2 input, e.g.
     lx = leftx                 # sticks take a whole axis; '~' inverts (e.g. ly = righty~)
     up = dpup, -lefty          # digital inputs take buttons, axis directions (+/-), triggers,
     select = none              #   joy:bN / joy:aN+ / joy:hN.up (raw), key:<SDL key name>
+Inline comments need a space before '#' (as above); both run.sh and the launcher strip them.
+Keys ',', ';', '=' and '#' can't be bound (they are separators in the file / PS2_INPUT_MAP).
 run.sh turns the section into PS2_INPUT_MAP for ps2run (ourcode/input). No section = built-in layout.
 """
 import time
@@ -39,10 +41,43 @@ SETTLE = 0.25        # all inputs must be released this long before listening (t
 AXIS_ON, AXIS_OFF = 0.6, 0.3
 
 
+import re
+_COMMENT = re.compile(r"\s+[#;].*$")
+FORBIDDEN_KEYS = {",", ";", "=", "#"}
+
+
+def strip_comment(v):
+    return _COMMENT.sub("", v).strip()
+
+
 def current(cfg, key):
     if cfg.has_section("bindings") and cfg.has_option("bindings", key):
-        return cfg.get("bindings", key)
+        return strip_comment(cfg.get("bindings", key))
     return DEFAULTS[key]
+
+
+_SRC = re.compile(r"^(?:[+-]?(?:%s)|(?:%s)~?|(?:%s)|joy:b(\d{1,3})|joy:a(\d{1,3})(?:[+-]|~)?|joy:h(\d{1,3})\.(?:up|down|left|right)|key:(.+))$"
+                  % ("|".join(AXES), "|".join(AXES), "|".join(BUTTONS)))
+
+
+def validate(target, spec):
+    """Same rules as ourcode/input/input_map.cpp. Returns an error string, or "" if valid."""
+    if target not in DEFAULTS: return "unknown input %r" % target
+    spec = strip_comment(spec)
+    if spec.lower() in ("", "none"): return ""
+    for raw in [x.strip() for x in spec.split(",")]:
+        s = raw if raw.startswith("key:") else raw.lower()
+        m = _SRC.match(s)
+        if not m or not raw: return "unknown source %r" % raw
+        if any(g is not None and int(g) > 255 for g in m.groups()[:3]):
+            return "index out of range in %r" % raw
+        if m.group(4) is not None and (not m.group(4).strip() or set(m.group(4)) & FORBIDDEN_KEYS):
+            return "key %r can't be bound" % raw
+        whole_axis = (s.rstrip("~") in AXES) or bool(re.match(r"^joy:a\d+~?$", s))
+        if target in ANALOG and not whole_axis: return "%s needs a whole axis, got %r" % (target, raw)
+        if target not in ANALOG and s.endswith("~"): return "'~' only applies to sticks: %r" % raw
+        if s.lstrip("+-") in BUTTONS and s[:1] in "+-": return "'+'/'-' only applies to axes: %r" % raw
+    return ""
 
 
 def pretty(spec):
@@ -74,7 +109,7 @@ def reset(cfg):
 def to_env(cfg):
     """The PS2_INPUT_MAP string run.sh would build (used by --dry-run / tests)."""
     if not cfg.has_section("bindings"): return ""
-    return ";".join("%s=%s" % (k, cfg.get("bindings", k)) for k, _ in TARGETS if cfg.has_option("bindings", k))
+    return ";".join("%s=%s" % (k, current(cfg, k)) for k, _ in TARGETS if cfg.has_option("bindings", k))
 
 
 def event_inputs(pg, e, analog, controller_ids):
@@ -105,7 +140,7 @@ def event_inputs(pg, e, analog, controller_ids):
         return out
     elif t in (pg.KEYDOWN, pg.KEYUP) and not analog:
         n = pg.key.name(e.key)
-        if n: return [("key:" + n, t == pg.KEYDOWN)]
+        if n and not (set(n) & FORBIDDEN_KEYS): return [("key:" + n, t == pg.KEYDOWN)]   # separators can't be bound
     return []
 
 

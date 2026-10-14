@@ -31,6 +31,26 @@ env = B.to_env(cfg); check(env.startswith("circle=paddle1, b;cross=a;") and "lx=
 check(B.pretty("-lefty, righty~, paddle1") == "LS Y-, RS Y inverted, Paddle 1", "pretty")
 B.reset(cfg); check(not cfg.has_section("bindings"), "reset")
 
+# --- nits: inline comments, forbidden keys, --set validation ---
+cfg = configparser.ConfigParser(inline_comment_prefixes=("#", ";"))
+cfg.read_string("[bindings]\ncircle = b, paddle1   # push-to-talk\nup = dpup ; note\n")
+check(B.current(cfg, "circle") == "b, paddle1" and B.current(cfg, "up") == "dpup", "configparser strips inline comments")
+raw = configparser.ConfigParser(); raw.read_string("[bindings]\ncircle = b, paddle1   # push-to-talk\n")
+check(B.current(raw, "circle") == "b, paddle1", "current() strips comments even without inline prefixes")
+check("circle=b, paddle1" in B.to_env(raw), "to_env has no comment")
+for good in [("circle", "b, paddle1"), ("up", "-lefty"), ("lx", "rightx~"), ("ly", "joy:a1"), ("r2", "joy:a5+, righttrigger"),
+             ("down", "joy:h0.down"), ("square", "key:space"), ("select", "none"), ("start", "start # x")]:
+    check(B.validate(*good) == "", "valid %r: %s" % (good, B.validate(*good)))
+for bad in [("circle", "zz"), ("bogus", "a"), ("lx", "a"), ("lx", "+leftx"), ("up", "+a"), ("up", "lefty~"),
+            ("r1", "joy:b256"), ("r1", "joy:b-1"), ("square", "key:,"), ("square", "key:;"), ("square", "key:="), ("square", "key:")]:
+    check(B.validate(*bad) != "", "invalid %r accepted" % (bad,))
+import pygame as pg
+pg.init()
+for ch in (",", ";", "="):
+    e = pg.event.Event(pg.KEYDOWN, key=ord(ch))
+    check(B.event_inputs(pg, e, False, set()) == [], "key %r rejected by capture" % ch)
+check(B.event_inputs(pg, pg.event.Event(pg.KEYDOWN, key=pg.K_SPACE), False, set()) == [("key:space", True)], "space capturable")
+
 # --- scripted controller run of the screen ---
 import pygame as pg
 pg.init(); scr = pg.display.set_mode((1280, 800)); f = pg.font.Font(None, 30)

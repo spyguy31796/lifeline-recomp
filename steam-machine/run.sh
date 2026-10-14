@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do case "$1" in --debug) DEBUG=1; shift;; --skip-tutorial) S
 
 # --- config.ini (env wins: every value is applied with := ) ---
 CFG="${LIFELINE_CONFIG:-$HERE/config.ini}"
-cfg() { [ -f "$CFG" ] || return 0; awk -F= -v s="[$1]" -v k="$2" '/^\[/{in_=($0==s)} in_ { kk=$1; gsub(/[ \t]/,"",kk); if (kk==k) { v=$2; gsub(/^[ \t]+|[ \t\r]+$/,"",v); print v; exit } }' "$CFG"; }
+cfg() { [ -f "$CFG" ] || return 0; awk -F= -v s="[$1]" -v k="$2" '/^\[/{in_=($0==s)} in_ { kk=$1; gsub(/[ \t]/,"",kk); if (kk==k) { v=$2; sub(/[ \t]+[#;].*$/,"",v); gsub(/^[ \t]+|[ \t\r]+$/,"",v); print v; exit } }' "$CFG"; }
 on() { [ "$(cfg qol "$1")" = 1 ]; }
 QOL_VARS=(PS2_INPUT_MAP PS2_SCALE PS2_VOICE_OVERLAY PS2_VOICE_CONFIG PS2_SAVE_SLOTS PS2_VOICE_ALWAYS_ON PS2_WIDESCREEN PS2_FAST_LOADS PS2_VOICE_OFF PS2_VOICE_ALIASES)
 sc=$(cfg qol resolution_scale); [ -n "$sc" ] && [ "$sc" != 1 ] && : "${PS2_SCALE:=$sc}"        # item 3 (works)
@@ -33,7 +33,7 @@ on faster_loads  && : "${PS2_FAST_LOADS:=1}"                            # item 8
 [ "$(cfg launch voice_off)" = 1 ] && : "${PS2_VOICE_OFF:=1}"
 # Controller bindings: [bindings] -> PS2_INPUT_MAP="circle=b,paddle1;lx=leftx;..." (read by ourcode/input in ps2run)
 if [ -f "$CFG" ] && [ -z "${PS2_INPUT_MAP+x}" ]; then
-  PS2_INPUT_MAP=$(awk -F= '/^\[/{in_=($0=="[bindings]")} in_ && NF>=2 && $1!~/^[ \t]*[#;]/ { k=$1; v=substr($0,index($0,"=")+1); gsub(/[ \t\r]/,"",k); gsub(/^[ \t]+|[ \t\r]+$/,"",v); out=out (out?";":"") k "=" v } END{print out}' "$CFG")
+  PS2_INPUT_MAP=$(awk -F= '/^\[/{in_=($0=="[bindings]")} in_ && NF>=2 && $1!~/^[ \t]*[#;]/ { k=$1; v=substr($0,index($0,"=")+1); sub(/[ \t]+[#;].*$/,"",v); gsub(/[ \t\r]/,"",k); gsub(/^[ \t]+|[ \t\r]+$/,"",v); out=out (out?";":"") k "=" v } END{print out}' "$CFG")
 fi
 true
 
