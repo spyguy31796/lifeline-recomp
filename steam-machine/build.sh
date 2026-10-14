@@ -44,7 +44,8 @@ SRC="$WORK/ps2-web-recomp"
 # Our patches, oldest first; see patches.sh for how applied ones are tracked.
 PATCHES=(0001-usbmic-hle-and-deci2-nohost.patch 0002-ee-overrides-and-voice-stage-a-b.patch 0003-input-remap-hook.patch
          0004-audio-buffer-and-perf-log.patch 0005-hotkeys-and-clean-quit.patch 0006-vu-fast-interpreter-and-check.patch
-         0007-save-state-slots.patch 0008-texture-upload-hook.patch)
+         0007-save-state-slots.patch 0008-texture-upload-hook.patch
+         0009-widescreen-present.patch)
 if [ ! -d "$SRC/.git" ]; then
   git clone "$UPSTREAM" "$SRC"
   git -C "$SRC" checkout --detach "$COMMIT"
@@ -59,7 +60,7 @@ phase clone+patch
 NAME=lifeline
 V="$OURCODE/voice"
 # every .cpp in voice/ and input/ (Vosk is dlopen'ed at run time, so no build-time libvosk)
-VOICE_SRCS=$(printf '%s;' "$V"/*.cpp "$OURCODE"/input/*.cpp "$OURCODE"/icons/*.cpp); VOICE_SRCS=${VOICE_SRCS%;}   # + controller remap layer
+VOICE_SRCS=$(printf '%s;' "$V"/*.cpp "$OURCODE"/input/*.cpp "$OURCODE"/icons/*.cpp "$OURCODE"/widescreen/*.cpp); VOICE_SRCS=${VOICE_SRCS%;}   # + remap, icons, widescreen
 GAME="$SRC/games/$NAME"; GEN="$SRC/generated/$NAME"; NAT="$SRC/build/native-$NAME"
 # shellcheck source=steam-machine/cpu_flags.sh
 . "$KIT/cpu_flags.sh"
@@ -97,8 +98,9 @@ phase "port.sh (tools+translate+first compile)"
 # --- Re-translate with the voice overrides, relink with the voice module ------
 ELF="$GAME/disc/$(sed -n 's/^BOOT2 *= *//p' "$GAME/disc/SYSTEM.CNF" | tr -d '\r' | sed 's/.*\\//; s/;.*//')"
 mods=(); [ -d "$GAME/modules" ] && mods=(--modules "$GAME/modules")
+cat "$V/overrides.txt" "$OURCODE/widescreen/overrides.txt" > "$WORK/overrides.txt"   # every EE hook address
 "$SRC/build/tools/eerecomp" "$ELF" --entries "$GAME/entries.txt" "${mods[@]}" \
-    --overrides "$V/overrides.txt" --out "$GEN" | tail -1
+    --overrides "$WORK/overrides.txt" --out "$GEN" | tail -1
 phase "re-translate with overrides"
 FLAVOR_FILE="$WORK/build-flavor" build_native "$SRC" "$NAT" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
     -DPS2_GENERATED="$GEN" -DPS2_EXTRA_SOURCES="$VOICE_SRCS" || exit 1

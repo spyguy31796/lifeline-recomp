@@ -31,7 +31,7 @@ QOL = [
     ("save_slots",       "4 Save-anywhere slots",       "bool", True,  "4 save-state slots: F5 / Select+R1 save, F8 / hold Select+L1 load, F6 / Select+Right slot"),
     ("always_on",        "5 Always-on listening",       "bool", False, "Voice activity presses talk for you (PS2_VOICE_ALWAYS_ON)"),
     ("large_model",      "6 Large speech model",        "bool", False, "Uses %s if downloaded (better names, slower)" % LARGE_MODEL),
-    ("widescreen",       "7 Native widescreen",         "bool", False, "True 16:9 with correct field of view"),
+    ("widescreen",       "7 Native widescreen",         "bool", True,  "16:9 hor+: wider 3D view; 2D HUD/menus are stretched (PS2_WIDESCREEN)"),
     ("faster_loads",     "8 Faster loads / skip FMV / 60fps", "bool", False, "Fast-forward loads, skip seen FMVs"),
     ("vu_fast",          "9 Faster VU interpreter",     "bool", True,  "Faster vector-unit interpreter, same results; off = original (PS2_VU_FAST)"),
     ("button_icons",     "10 Button icons",             ("choice", ["ps2", "xbox", "deck"]), True, "On-screen button glyphs: PS2 (original), Xbox or Steam Deck (PS2_ICON_PACK)"),

@@ -30,7 +30,7 @@ on save_slots    && : "${PS2_SAVE_SLOTS:=1}"                            # item 4
 [ "${PS2_SAVE_SLOTS:-}" = 1 ] && : "${PS2_SAVE_DIR:=$HERE/saves}"     # saves/slotN.state (+ .voice)
 on always_on     && : "${PS2_VOICE_ALWAYS_ON:=1}"                       # item 5 (reserved)
 if on large_model && [ -z "$_m" ] && [ -d "$VOSK_DIR/vosk-model-en-us-0.22" ]; then PS2_VOICE_VOSK_MODEL="$VOSK_DIR/vosk-model-en-us-0.22"; fi  # item 6
-on widescreen    && : "${PS2_WIDESCREEN:=1}"                            # item 7 (reserved)
+on widescreen    && : "${PS2_WIDESCREEN:=1}"                            # item 7
 on faster_loads  && : "${PS2_FAST_LOADS:=1}"                            # item 8 (reserved)
 [ -z "${PS2_VU_FAST+x}" ] && on vu_fast && PS2_VU_FAST=1              # item 9 (works; 0006 patch). Set-but-empty stays off; only unset + config on enables it.
 # item 10: button icons. ps2 (default) = original glyphs and the texture hook stays off; other names: icons.local/<name>

@@ -119,7 +119,7 @@ Keyboard works too (arrows, Enter, Esc).
 | 4 | Save-anywhere slots | `save_slots` | `PS2_SAVE_SLOTS=1` | works (rebuild once) |
 | 5 | Always-on listening | `always_on` | `PS2_VOICE_ALWAYS_ON=1` | coming soon |
 | 6 | Large speech model | `large_model` | `PS2_VOICE_VOSK_MODEL=.../vosk-model-en-us-0.22` (if downloaded) | coming soon |
-| 7 | Native widescreen | `widescreen` | `PS2_WIDESCREEN=1` | coming soon |
+| 7 | Native widescreen | `widescreen` | `PS2_WIDESCREEN=1` | **works** (16:9 hor+; 2D HUD/menus stretched, see below) |
 | 8 | Faster loads / skip FMV / 60fps | `faster_loads` | `PS2_FAST_LOADS=1` | coming soon |
 | 9 | Faster VU interpreter | `vu_fast` | `PS2_VU_FAST=1` | **works** (off by default; see below) |
 | 10 | Button icons (PS2 / Xbox / Steam Deck) | `button_icons` | `PS2_ICON_PACK=<dir>` | works for the OPTION menu (rebuild once); see `icons/README.md` |
@@ -142,6 +142,19 @@ option is off (or `PS2_VU_FAST=0` is exported), the original interpreter runs. T
   exits 0 only if all match. `build.sh` runs it after the build (result in `build-progress.log`; a failure only warns,
   keep the toggle off). Standalone: `steam-machine/tests/test_vu_fast_selftest.sh <ps2run>`.
 - Launcher/run.sh test: `steam-machine/launcher/tests/test_vu_fast.py`.
+
+**Native widescreen (item 7, `PS2_WIDESCREEN=1`, off by default).** Hor+ 16:9: EE hooks on the game's
+aspect setter (`0x1CA208`) and per-frame camera update (`0x1CA928`) scale the camera's horizontal aspect
+(camera `+0x28`) by 3/4, so the game draws a 4/3-wider view into its usual frame, and the present path
+(0009) shows that frame at 16:9 (new windows open at 1280x720). Vertical field of view is unchanged. The
+setter scales its argument on the way in (camera re-init). The per-frame hook only rewrites the field when it
+is exactly 1.0 (the game's normal value) and leaves anything else alone, so a state saved with widescreen on and loaded in a
+fresh process stays 0.75 instead of being widened twice to 0.5625. With widescreen off nothing is
+registered, but there is still one `ee_override` lookup per frame at `0x1CA928` (and at the setter when
+that runs). Known limits: 2D HUD, menus, text and FMVs are drawn in screen space, so they are stretched
+4/3 horizontally; screens the game draws as a 3D panel facing the camera (e.g. the security-room monitor)
+show the room at their left and right edges; a save state made with widescreen on keeps the narrow camera
+if loaded with it off, until the camera is re-initialised (next room).
 
 **First start (Desktop Mode, Konsole):**
 ```sh
@@ -355,6 +368,8 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `0007-save-state-slots.patch` | Patch for ps2-web-recomp: `request_state()`, a save/load at the next frame boundary for the save-slot hotkeys |
 | `0008-texture-upload-hook.patch` | Patch for ps2-web-recomp: optional hook on small host→GS texture uploads (button icon packs) |
 | `icons/` | Button icon packs (our art), manifest/blit code, texture-dump tool, tests |
+| `0009-widescreen-present.patch` | Patch for ps2-web-recomp: `ps2::display_aspect()` (16:9 with `PS2_WIDESCREEN=1`) used by the SDL and WebGPU present |
+| `widescreen/` | Widescreen EE hooks (aspect setter + per-frame guard, camera aspect x 3/4 for hor+), `overrides.txt` and unit test |
 | `input/` | Controller remap layer and hotkeys (`PS2_INPUT_MAP` parser, chord/hold state, SDL apply) and their unit tests |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 | `steam-machine/cpu_flags.sh` | CPU-tuned build flags (`[build] cpu_tuned`) with generic fallback; test in `steam-machine/tests/` |
