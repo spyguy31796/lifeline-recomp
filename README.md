@@ -237,15 +237,24 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 - VU microcode is interpreted, so performance depends on the CPU.
 
 ### Updating an existing install (build.sh)
-- Applied patches are recorded in `ps2-web-recomp/.git/lifeline-patches`; only missing ones are applied, so
-  re-running is a no-op. Checkouts from older kits have no marker: the newest patch that reverse-applies is found
-  (later patches touch the same lines, so only the newest one can be checked) and it and all before it are
-  recorded as applied.
+- Patches are applied by `steam-machine/patches.sh`. Applied ones are recorded in
+  `ps2-web-recomp/.git/lifeline-patches` as `name sha256` lines (written atomically right after each apply), with a
+  copy of each applied patch in `.git/lifeline-patches.d/`. Re-running applies nothing.
+- A patch whose sha256 changed is taken back out (with every later patch) using the stored copies and applied
+  again.
+- No marker (older kits, or an interrupted clone), a marker from the previous kit (names only), an unreadable
+  one, or a patch that fails to apply: the tree is checked instead. The newest patch that reverse-applies is
+  applied, and so is everything before it, down to 0001; the rest are applied.
+- **Recovery:** if patching still fails, delete `ps2-web-recomp/.git/lifeline-patches` and run Install / update
+  again; if that fails too, `git -C ~/lifeline-recomp/ps2-web-recomp reset --hard` first (a fresh clone also works).
 - An existing build dir is re-configured before the first compile, so new `voice/` or `input/` files are linked.
-- The previous `ps2run` is backed up and put back if any compile or link fails, so a failed update leaves the
-  game playable ("build failed: the previous ps2run was kept").
-- Test: `steam-machine/tests/build-upgrade-test.sh <built-workdir> <iso> <scratch-dir>` sets up the previous
-  release (0001-0004, old build dir), runs the new `build.sh` twice and once with a source that can't link.
+- The previous `ps2run` is copied to `ps2run.prev` and put back if any compile or link fails ("build failed: the
+  previous ps2run was kept"). A killed build (SIGKILL, power loss) can't run that restore; the next run finds
+  `ps2run.prev` and puts it back first ("restored ps2run from an interrupted build"), or `mv` it back by hand.
+- Tests: `steam-machine/tests/patch-marker-test.sh` (fast, synthetic checkout: unpatched, partial, older kit,
+  name-only / corrupt / CRLF marker, changed patch, apply-failure fallback) and
+  `steam-machine/tests/build-upgrade-test.sh <built-workdir> <iso> <scratch-dir>` (previous release -> new
+  build.sh twice, then a source that can't link).
 
 ## Repo layout
 | Path | What |
@@ -254,7 +263,7 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `0002-ee-overrides-and-voice-stage-a-b.patch` | Patch for ps2-web-recomp: EE function overrides and voice module hooks |
 | `voice/` | Voice module that replaces the original recognizer (Vosk backend, SDL mic, phrase-table reader, natural-sentence matcher) |
 | `voice/tools/` | `fat.py` / `arcx.py` extract the phrase tables from your ISO; `build_aliases.py` builds the local alias table |
-| `steam-machine/` | `build.sh`, `run.sh`, `make-skip-state.sh` and kit notes |
+| `steam-machine/` | `build.sh` (+ `patches.sh`), `run.sh`, `make-skip-state.sh` and kit notes |
 | `0003-input-remap-hook.patch` | Patch for ps2-web-recomp: weak hook that lets `input/` remap the controller |
 | `0004-audio-buffer-and-perf-log.patch` | Patch for ps2-web-recomp: configurable audio pacing buffer, underrun counter, `[perf]` log line |
 | `0005-hotkeys-and-clean-quit.patch` | Patch for ps2-web-recomp: hotkey hook (fullscreen, hold-to-quit), card save and audio drain on exit |

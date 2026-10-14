@@ -40,30 +40,16 @@ for t in git cmake ninja clang++ python3 curl unzip; do command -v $t >/dev/null
 
 # --- Source at the pinned commit + our patches -------------------------------
 SRC="$WORK/ps2-web-recomp"
-# Our patches, oldest first. Applied ones are recorded in $MARK (inside .git, so not part of the tree).
+# Our patches, oldest first; see patches.sh for how applied ones are tracked.
 PATCHES=(0001-usbmic-hle-and-deci2-nohost.patch 0002-ee-overrides-and-voice-stage-a-b.patch 0003-input-remap-hook.patch
          0004-audio-buffer-and-perf-log.patch 0005-hotkeys-and-clean-quit.patch)
-MARK="$SRC/.git/lifeline-patches"
 if [ ! -d "$SRC/.git" ]; then
   git clone "$UPSTREAM" "$SRC"
   git -C "$SRC" checkout --detach "$COMMIT"
-  : > "$MARK"
 fi
-if [ ! -f "$MARK" ]; then
-  # Checkout from an older kit (no marker): later patches touch the same lines as earlier ones, so a
-  # reverse check only works on the newest applied patch. Find it; it and everything before it are applied.
-  newest=1   # 0001 + 0002 were always applied at clone time
-  for ((i=${#PATCHES[@]}-1; i>1; i--)); do
-    if git -C "$SRC" apply --reverse --check "$OURCODE/${PATCHES[$i]}" 2>/dev/null; then newest=$i; break; fi
-  done
-  printf '%s\n' "${PATCHES[@]:0:newest+1}" > "$MARK.tmp" && mv "$MARK.tmp" "$MARK"
-  echo "patches already applied: ${PATCHES[*]:0:newest+1}"
-fi
-for p in "${PATCHES[@]}"; do
-  grep -qxF "$p" "$MARK" && continue
-  git -C "$SRC" apply --index "$OURCODE/$p"
-  echo "$p" >> "$MARK"; echo "applied $p"
-done
+# shellcheck source=steam-machine/patches.sh
+source "$KIT/patches.sh"
+apply_patches "$SRC" "$OURCODE" "${PATCHES[@]}"
 phase clone+patch
 [ "$(git -C "$SRC" rev-parse HEAD)" = "$COMMIT" ] || { echo "unexpected commit in $SRC" >&2; exit 1; }
 
@@ -79,6 +65,9 @@ configure() {
 }
 # Keep a working game if any compile/link below fails: back up ps2run, put it back unless we finish.
 BUILD_OK=""
+# A ps2run.prev left behind means an earlier run was killed (SIGKILL skips the restore below): it is the
+# last good binary, so put it back first.
+if [ -f "$NAT/ps2run.prev" ]; then mv -f "$NAT/ps2run.prev" "$NAT/ps2run"; echo "restored ps2run from an interrupted build"; fi
 [ -f "$NAT/ps2run" ] && cp -p "$NAT/ps2run" "$NAT/ps2run.prev"
 keep_old_ps2run() {
   if [ -z "$BUILD_OK" ] && [ -f "$NAT/ps2run.prev" ]; then
