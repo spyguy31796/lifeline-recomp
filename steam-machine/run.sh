@@ -21,7 +21,8 @@ while [ $# -gt 0 ]; do case "$1" in --debug) DEBUG=1; shift;; --skip-tutorial) S
 CFG="${LIFELINE_CONFIG:-$HERE/config.ini}"
 cfg() { [ -f "$CFG" ] || return 0; awk -F= -v s="[$1]" -v k="$2" '/^\[/{in_=($0==s)} in_ { kk=$1; gsub(/[ \t]/,"",kk); if (kk==k) { v=$2; sub(/[ \t]+[#;].*$/,"",v); gsub(/^[ \t]+|[ \t\r]+$/,"",v); print v; exit } }' "$CFG"; }
 on() { [ "$(cfg qol "$1")" = 1 ]; }
-QOL_VARS=(PS2_INPUT_MAP PS2_SCALE PS2_VOICE_OVERLAY PS2_VOICE_CONFIG PS2_SAVE_SLOTS PS2_VOICE_ALWAYS_ON PS2_WIDESCREEN PS2_FAST_LOADS PS2_VOICE_OFF PS2_VOICE_ALIASES)
+[ "$DEBUG" = 1 ] && : "${PS2_PERF_LOG:=1}"   # once-a-second fps / CPU / GPU / audio / underrun line in logs/run-*.log
+QOL_VARS=(PS2_PERF_LOG PS2_AUDIO_BUFFER_MS PS2_AUDIO_SAMPLES PS2_INPUT_MAP PS2_SCALE PS2_VOICE_OVERLAY PS2_VOICE_CONFIG PS2_SAVE_SLOTS PS2_VOICE_ALWAYS_ON PS2_WIDESCREEN PS2_FAST_LOADS PS2_VOICE_OFF PS2_VOICE_ALIASES)
 sc=$(cfg qol resolution_scale); [ -n "$sc" ] && [ "$sc" != 1 ] && : "${PS2_SCALE:=$sc}"        # item 3 (works)
 on voice_readout && : "${PS2_VOICE_OVERLAY:=1}"                         # item 1 (reserved)
 on voice_tuning  && : "${PS2_VOICE_CONFIG:=$HERE/voice.ini}"            # item 2 (reserved)
