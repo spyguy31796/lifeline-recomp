@@ -32,7 +32,8 @@ if run "$REPO" 1; then ok "upgrade build exit 0"; else bad "upgrade build failed
 grep -q "patches already applied: .*0004-audio-buffer-and-perf-log.patch" "$T/build-1.log" && grep -q "applied 0005-hotkeys-and-clean-quit.patch" "$T/build-1.log" \
   && ok "detected 0001-0004, applied 0005" || bad "patch detection"
 has_hotkeys "$N/ps2run" && ok "ps2run links the hotkey code" || bad "no hotkey code in ps2run"
-[ "$(grep -c " [0-9a-f]\{64\}$" "$S/.git/lifeline-patches")" = 5 ] && ok "marker lists 5 patches with sha256" || bad "marker"
+NP=$(find "$REPO" -maxdepth 1 -name '0*.patch' | wc -l)   # every kit patch (0006 is reserved, so not 0001..N)
+[ "$(grep -c " [0-9a-f]\{64\}$" "$S/.git/lifeline-patches")" = "$NP" ] && ok "marker lists $NP patches with sha256" || bad "marker"
 [ ! -e "$N/ps2run.prev" ] && ok "backup removed after success" || bad "ps2run.prev left behind"
 h1=$(git -C "$S" diff --cached | sha256sum)
 ( . "$REPO/steam-machine/ps2run_backup.sh"; backup_ps2run "$N" )   # as if the previous run had been killed mid-build
