@@ -16,7 +16,7 @@ rm -rf "$T"; mkdir -p "$T"; cp -a "$SEED" "$T/work"
 W="$T/work"; S="$W/ps2-web-recomp"; N="$S/build/native-lifeline"
 rm -rf "$S/build"   # a copied CMake build dir points at the seed; the old build is rebuilt here
 git -C "$REPO" worktree add -f --detach "$T/oldkit" "$OLD" >/dev/null 2>&1
-rm -f "$S/.git/lifeline-patches"
+rm -rf "$S/.git/lifeline-patches" "$S/.git/lifeline-patches.d"
 git -C "$S" reset -q --hard
 for p in 0001-usbmic-hle-and-deci2-nohost 0002-ee-overrides-and-voice-stage-a-b 0003-input-remap-hook 0004-audio-buffer-and-perf-log; do
   git -C "$S" apply --index "$T/oldkit/$p.patch"
@@ -24,6 +24,7 @@ done
 OLDSRCS=$(printf '%s;' "$T"/oldkit/voice/*.cpp "$T"/oldkit/input/*.cpp); OLDSRCS=${OLDSRCS%;}
 cmake -S "$S" -B "$N" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ -DPS2_GENERATED="$S/generated/lifeline" \
     -DPS2_EXTRA_SOURCES="$OLDSRCS" >/dev/null && ninja -C "$N" ps2run >/dev/null
+[ -x "$N/ps2run" ] || { bad "old ps2run was not built"; exit 1; }
 has_hotkeys "$N/ps2run" && bad "old ps2run already has hotkeys" || ok "old release state: 0001-0004, old build dir, ps2run without hotkeys"
 
 run() { KIT_NO_CONTAINER=1 SKIP_VOSK=1 bash "$1/steam-machine/build.sh" "$ISO" "$W" > "$T/build-$2.log" 2>&1; }
@@ -31,10 +32,12 @@ if run "$REPO" 1; then ok "upgrade build exit 0"; else bad "upgrade build failed
 grep -q "patches already applied: .*0004-audio-buffer-and-perf-log.patch" "$T/build-1.log" && grep -q "applied 0005-hotkeys-and-clean-quit.patch" "$T/build-1.log" \
   && ok "detected 0001-0004, applied 0005" || bad "patch detection"
 has_hotkeys "$N/ps2run" && ok "ps2run links the hotkey code" || bad "no hotkey code in ps2run"
-[ "$(wc -l < "$S/.git/lifeline-patches")" = 5 ] && ok "marker lists 5 patches" || bad "marker"
+[ "$(grep -c " [0-9a-f]\{64\}$" "$S/.git/lifeline-patches")" = 5 ] && ok "marker lists 5 patches with sha256" || bad "marker"
 [ ! -e "$N/ps2run.prev" ] && ok "backup removed after success" || bad "ps2run.prev left behind"
 h1=$(git -C "$S" diff --cached | sha256sum)
+cp -p "$N/ps2run" "$N/ps2run.prev"   # as if the previous run had been killed mid-build
 if run "$REPO" 2; then ok "second run exit 0"; else bad "second run failed"; tail -20 "$T/build-2.log"; fi
+grep -q "restored ps2run from an interrupted build" "$T/build-2.log" && ok "leftover ps2run.prev restored first" || bad "no interrupted-build restore"
 grep -q "applied 0" "$T/build-2.log" && bad "second run applied a patch again" || ok "second run applied nothing"
 [ "$(git -C "$S" diff --cached | sha256sum)" = "$h1" ] && ok "source tree unchanged by the second run" || bad "tree changed"
 
