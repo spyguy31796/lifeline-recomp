@@ -122,6 +122,23 @@ int main() {
         s3.update(0, dm, down); held.insert(name(start)); s3.update(16, dm, down);
         CHECK(s3.mask(dm, pad) == (1u << kStart));
     }
+    {   // raw bindings (select=joy:b6, start=joy:b7) vs the named default chord back&start: same physical buttons
+        Map raw; e.clear();
+        CHECK(parse_map("select=joy:b6; start=joy:b7; cross=joy:b0", raw, e));
+        auto pad = [](const Source &x) {   // what SDL_GameControllerGetBindForButton reports for this pad
+            Source r = x;
+            if (x.kind == Kind::Button && (x.index == 4 || x.index == 6 || x.index == 0)) { r.kind = Kind::JoyButton; r.index = x.index == 4 ? 6 : x.index == 6 ? 7 : 0; }
+            return r;
+        };
+        auto bits = [&](const Source &x) { return source_bits(raw, x, pad); };
+        CHECK(bits(back) == (1u << kSelect) && bits(start) == (1u << kStart));
+        Source jb7; parse_source("joy:b7", jb7, e); CHECK(bits(jb7) == (1u << kStart));
+        auto ident = [](const Source &x) { return x; };
+        CHECK(source_bits(raw, back, ident) == 0);   // without the pad mapping they can't be matched
+        HotkeyState s; held = {name(back)};
+        s.update(0, raw, down); held.insert(name(start)); s.update(16, raw, down);
+        CHECK(s.latched(kHkQuit, 2) && s.mask(raw, bits) == (1u << kStart));   // Select keeps going, Start hidden
+    }
     std::printf(fails ? "%d FAILED\n" : "all hotkey tests passed\n", fails);
     return fails != 0;
 }

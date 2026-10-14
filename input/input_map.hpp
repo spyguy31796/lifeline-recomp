@@ -4,6 +4,7 @@
 // hotkeys: "hk_fullscreen=key:F11, back&rightstick; hk_quit=back&start@1500" ('&' = chord, '@' = hold ms).
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,10 @@ bool hotkey_from_name(const std::string &n, int &out);
 // "chord[@ms], chord..." where chord = "src&src..."; "none" or "" = no chords.
 bool parse_chords(const std::string &spec, std::vector<Chord> &out, std::string &err);
 bool same_source(const Source &a, const Source &b);
+// PS2 buttons (bit per digital target) that source s drives in map m. `physical` rewrites a source to the
+// raw joystick input it reads (a named button -> joy:bN / joy:hN.dir via the pad's SDL mapping), so a
+// raw binding and the named button for the same physical button compare equal. Identity if unknown.
+std::uint16_t source_bits(const Map &m, const Source &s, const std::function<Source(const Source &)> &physical);
 Map default_map();
 // SDL axis value (-32768..32767) -> PS2 stick byte; 0 maps to 0x80 with or without invert.
 int invert_axis(int v);

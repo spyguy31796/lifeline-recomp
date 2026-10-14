@@ -184,6 +184,10 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
     keyboard keys, e.g. Enter = START during Alt+Enter). Pressed in the same frame, none of them reaches the game.
   - There is no input delay, so a partial chord is not held back: **press Select first**, then the other button.
     All controller defaults start with Select, which does nothing harmful during normal play; just say Select.
+  - Raw and named bindings for the same button match: with `select = joy:b6`, `start = joy:b7` the default
+    `back&start` chord still hides Start, using the pad's SDL mapping (the raw index SDL reports for the named
+    button). With no controller mapping (a plain joystick) they can't be matched; bind the chord with the same
+    raw inputs instead (`hk_quit = joy:b6&joy:b7@1500`).
   - The launcher warns when a hotkey chord uses a push-to-talk (Circle) input: pressed first it talks, pressed
     later it is held back while the chord is down.
 - Rebind them in Launcher → Controller bindings → **Hotkey: fullscreen** / **Hotkey: quit (hold)**: hold every
@@ -231,6 +235,17 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 - Only the NTSC-U disc (SLUS_208.48) is supported. Linux only for now.
 - If no mic is selected, SDL records from a silent null device and nothing is heard; reconnect the headset and pick it as input.
 - VU microcode is interpreted, so performance depends on the CPU.
+
+### Updating an existing install (build.sh)
+- Applied patches are recorded in `ps2-web-recomp/.git/lifeline-patches`; only missing ones are applied, so
+  re-running is a no-op. Checkouts from older kits have no marker: the newest patch that reverse-applies is found
+  (later patches touch the same lines, so only the newest one can be checked) and it and all before it are
+  recorded as applied.
+- An existing build dir is re-configured before the first compile, so new `voice/` or `input/` files are linked.
+- The previous `ps2run` is backed up and put back if any compile or link fails, so a failed update leaves the
+  game playable ("build failed: the previous ps2run was kept").
+- Test: `steam-machine/tests/build-upgrade-test.sh <built-workdir> <iso> <scratch-dir>` sets up the previous
+  release (0001-0004, old build dir), runs the new `build.sh` twice and once with a source that can't link.
 
 ## Repo layout
 | Path | What |
