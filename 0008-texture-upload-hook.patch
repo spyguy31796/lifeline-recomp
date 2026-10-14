@@ -1,0 +1,99 @@
+diff --git a/runtime/src/gs/gs.cpp b/runtime/src/gs/gs.cpp
+index 2991477..6757da3 100644
+--- a/runtime/src/gs/gs.cpp
++++ b/runtime/src/gs/gs.cpp
+@@ -22,6 +22,12 @@
+ #include <cstring>
+ #include <vector>
+ 
++// Lifeline texture hook (ourcode/icons/icon_pack.cpp); weak, so the runner is unchanged without it.
++extern "C" __attribute__((weak)) bool lifeline_gs_upload_enabled();
++extern "C" __attribute__((weak)) bool lifeline_gs_upload_wanted(std::uint32_t psm, std::uint32_t width, std::uint32_t height);
++extern "C" __attribute__((weak)) void lifeline_gs_upload(std::uint32_t psm, std::uint32_t width, std::uint32_t height,
++                                                         std::uint8_t *data, std::size_t bytes);
++
+ namespace ps2::gs {
+ 
+ State g_state;
+@@ -246,7 +252,56 @@ void transfer_pixel(std::uint32_t value) {
+ std::uint8_t g_carry[4];
+ std::size_t g_carried = 0;
+ 
++void feed_image_now(const std::uint8_t *data, std::size_t bytes);
++
++// Lifeline: optional texture hook (ourcode/icons). When it is linked and enabled, a whole host->GS upload is
++// gathered first, handed to the hook (which may hash, dump or patch it in place), then fed as one block.
++// Off (the default) costs one branch per image packet.
++std::vector<std::uint8_t> g_upload;
++std::size_t g_upload_want = 0;
++std::uint32_t g_upload_psm = 0, g_upload_w = 0, g_upload_h = 0;
++
++bool upload_hook_on() {
++    static const bool on = lifeline_gs_upload_enabled && lifeline_gs_upload_wanted && lifeline_gs_upload && lifeline_gs_upload_enabled();
++    return on;
++}
++
++// Feed whatever was gathered: complete -> through the hook; cut short -> as it is, unhooked. An upload whose data
++// ends early (fewer bytes than w*h) stays gathered until the next TRXDIR write (or a state save) flushes it, so
++// the GS sees those bytes one transfer later than upstream would, still in order and before the next transfer.
++void upload_flush() {
++    if (g_upload.empty()) { g_upload_want = 0; return; }
++    static std::vector<std::uint8_t> data;   // reused: no allocation per upload once warmed up
++    data.swap(g_upload);                     // g_upload keeps the old (cleared) buffer's capacity
++    if (data.size() == g_upload_want) lifeline_gs_upload(g_upload_psm, g_upload_w, g_upload_h, data.data(), data.size());
++    g_upload_want = 0;
++    feed_image_now(data.data(), data.size());
++    data.clear();
++}
++
++void upload_begin(const State &s) {
++    upload_flush();
++    if (!upload_hook_on()) return;
++    g_upload_psm = static_cast<std::uint32_t>(s.bitbltbuf >> 56) & 0x3Fu;
++    g_upload_w = static_cast<std::uint32_t>(s.trxreg) & 0xFFFu;
++    g_upload_h = static_cast<std::uint32_t>(s.trxreg >> 32) & 0xFFFu;
++    if (!lifeline_gs_upload_wanted(g_upload_psm, g_upload_w, g_upload_h)) return;   // size/format filter: not gathered
++    g_upload_want = (static_cast<std::size_t>(g_upload_w) * g_upload_h * bits_per_pixel(g_upload_psm) + 7) / 8;
++    g_upload.reserve(g_upload_want);
++}
++
+ void feed_image(const std::uint8_t *data, std::size_t bytes) {
++    if (g_upload_want && (g_state.trxdir & 3u) == 0) {
++        const std::size_t take = std::min(bytes, g_upload_want - g_upload.size());
++        g_upload.insert(g_upload.end(), data, data + take);
++        if (g_upload.size() == g_upload_want) upload_flush();
++        if (take < bytes) feed_image_now(data + take, bytes - take);   // padding past the image: as upstream
++        return;
++    }
++    feed_image_now(data, bytes);
++}
++
++void feed_image_now(const std::uint8_t *data, std::size_t bytes) {
+ #ifdef PS2_GPU
+     if (gpu_on() && (g_state.trxdir & 3u) == 0) gpu::image_data(data, bytes);
+ #endif
+@@ -594,6 +649,7 @@ void write(std::uint32_t reg, std::uint64_t value) {
+             std::fprintf(stderr, "[gs] trx dir %llu buf 0x%016llX pos 0x%016llX reg 0x%016llX\n", static_cast<unsigned long long>(value & 3u),
+                          static_cast<unsigned long long>(s.bitbltbuf), static_cast<unsigned long long>(s.trxpos), static_cast<unsigned long long>(s.trxreg));
+         }
++        upload_flush();   // Lifeline texture hook: a new transfer ends any gathered one
+         s.trxdir = value;
+         g_transfer = Transfer{};
+         g_carried = 0;
+@@ -604,7 +660,7 @@ void write(std::uint32_t reg, std::uint64_t value) {
+             else if ((value & 3u) == 1 && !cpu_raster()) download_source(s);
+         }
+ #endif
+-        if ((value & 3u) == 0) g_transfer.active = true;
++        if ((value & 3u) == 0) { g_transfer.active = true; upload_begin(s); }
+         else if ((value & 3u) == 2) { if (cpu_raster()) local_copy(); }
+         else if ((value & 3u) == 1) g_transfer.active = true;
+         break;
+@@ -1068,6 +1124,7 @@ std::string g_state_error;
+ 
+ void render_state(ps2::state::Stream &s) {
+     flush_and_wait();
++    upload_flush();   // Lifeline texture hook: nothing half-gathered goes into a state
+     s.pod(g_state);
+     ++g_setup_generation;
+     s.pod(g_pmode);

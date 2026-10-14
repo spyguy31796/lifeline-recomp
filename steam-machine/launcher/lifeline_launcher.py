@@ -34,6 +34,7 @@ QOL = [
     ("widescreen",       "7 Native widescreen",         "bool", False, "True 16:9 with correct field of view"),
     ("faster_loads",     "8 Faster loads / skip FMV / 60fps", "bool", False, "Fast-forward loads, skip seen FMVs"),
     ("vu_fast",          "9 Faster VU interpreter",     "bool", True,  "Faster vector-unit interpreter, same results; off = original (PS2_VU_FAST)"),
+    ("button_icons",     "10 Button icons",             ("choice", ["ps2", "xbox", "deck"]), True, "On-screen button glyphs: PS2 (original), Xbox or Steam Deck (PS2_ICON_PACK)"),
 ]
 # [build] options change the compiled binary: they take effect on the next Install / update.
 BUILD = [("cpu_tuned", "CPU-tuned build (rebuild)",
@@ -41,7 +42,7 @@ BUILD = [("cpu_tuned", "CPU-tuned build (rebuild)",
 LAUNCH = [("skip_tutorial", "Skip tutorial (needs saves/room001.state)"),
           ("fullscreen", "Fullscreen"), ("debug", "Debug logs"), ("voice_off", "Voice off (PS2_VOICE_OFF)")]
 DEFAULTS = {"launch": {"skip_tutorial": "0", "fullscreen": "1", "debug": "1", "voice_off": "0"},
-            "qol": {k: ("1" if k == "resolution_scale" else "0") for k, *_ in QOL},   # save_slots stays off until turned on
+            "qol": {k: {"resolution_scale": "1", "button_icons": "ps2"}.get(k, "0") for k, *_ in QOL},   # save_slots stays off until turned on
             "build": {k: "0" for k, *_ in BUILD},
             "paths": {"iso": DEFAULT_ISO, "kit": os.path.dirname(HERE)}}
 
