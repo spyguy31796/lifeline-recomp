@@ -10,7 +10,7 @@ Headless helpers (no window):
   lifeline_launcher.py --set qol.resolution_scale=2 [--set ...]   edit config and exit
 Contains only our code; never bundles game data.
 """
-import argparse, configparser, hashlib, glob, os, shlex, subprocess, sys, threading, time, urllib.request, zipfile, shutil
+import argparse, configparser, hashlib, glob, os, shlex, subprocess, sys, tempfile, threading, time, urllib.request, zipfile, shutil
 
 HOME = os.path.expanduser("~")
 WORK = os.environ.get("LIFELINE_WORK", os.path.join(HOME, "lifeline-recomp"))
@@ -91,18 +91,41 @@ class Job:
     def __init__(self, title, fn):
         self.title, self.lines, self.done, self.ok = title, [], False, None
         self.lock = threading.Lock()
+        self.log_path, self._f = None, None
         threading.Thread(target=self._run, args=(fn,), daemon=True).start()
+
+    def open_log(self, kind):
+        """Tee everything to ~/lifeline-recomp/logs/<kind>-YYYYMMDD-HHMMSS.log."""
+        d = os.path.join(WORK, "logs"); os.makedirs(d, exist_ok=True)
+        base = os.path.join(d, "%s-%s" % (kind, time.strftime("%Y%m%d-%H%M%S")))
+        self.log_path = base + ".log"
+        try: self._f = open(self.log_path, "x", buffering=1, errors="replace")
+        except FileExistsError:
+            self.log_path = "%s-%06d-%d.log" % (base, int(time.time() * 1e6) % 1000000, os.getpid())
+            self._f = open(self.log_path, "x", buffering=1, errors="replace")
+        self._f.write("== %s  %s\n" % (self.title, time.strftime("%Y-%m-%d %H:%M:%S %z")))
+
+    def file(self, s):   # log file only (full command output)
+        if self._f:
+            with self.lock: self._f.write(s.rstrip("\n") + "\n")
 
     def log(self, s):
         with self.lock:
             self.lines.append(s.rstrip()); self.lines[:] = self.lines[-400:]
+            if self._f: self._f.write(s.rstrip("\n") + "\n")
 
     def tail(self, n):
         with self.lock: return list(self.lines[-n:])
 
     def _run(self, fn):
         try: self.ok = bool(fn(self))
-        except Exception as ex: self.log("ERROR: %s" % ex); self.ok = False
+        except Exception as ex:
+            import traceback
+            self.log("ERROR: %s" % ex); self.file(traceback.format_exc()); self.ok = False
+        if self._f:
+            self.log("== result: %s" % ("OK" if self.ok else "FAILED"))
+            if not self.ok: self.log("Full log: " + self.log_path)
+            self._f.close(); self._f = None
         self.done = True
 
 
@@ -114,6 +137,7 @@ def _stream(job, cmd, progress=None):
     seen = len(open(progress, errors="replace").read().splitlines()) if progress and os.path.exists(progress) else 0
     out = []
     for line in p.stdout:
+        job.file("  | " + line)
         out.append(line.rstrip()); out[:] = out[-40:]
         if progress and os.path.exists(progress):
             with open(progress, errors="replace") as f: pl = f.read().splitlines()
@@ -121,20 +145,44 @@ def _stream(job, cmd, progress=None):
             seen = len(pl)
         elif not progress: job.log(line)
     ok = p.wait() == 0
+    job.file("  exit %d" % p.returncode)
     if not ok:
         job.log("--- failed (exit %d), last output:" % p.returncode)
         for l in out[-20:]: job.log(l)
     return ok
 
 
+def _install_file(src, dst):
+    """Copy src to dst atomically (tmp + rename). Skips when they are the same file, which is the
+    case when Install/update runs from the installed launcher (~/lifeline-recomp/launcher)."""
+    if os.path.exists(dst) and os.path.samefile(src, dst): return False
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst) or ".", prefix="." + os.path.basename(dst) + ".", suffix=".tmp")
+    os.close(fd)
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
+    return True
+
+
 def _write_atomic(path, data):
-    tmp = path + ".tmp"
-    with open(tmp, "wb") as f: f.write(data); f.flush(); os.fsync(f.fileno())
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix="." + os.path.basename(path) + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f: f.write(data); f.flush(); os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
 
 
 def install(job, c):
+    job.open_log("install")
     kit, iso = kit_dir(c), c.get("paths", "iso")
+    job.file("kit=%s iso=%s work=%s launcher=%s cwd=%s python=%s" % (kit, iso, WORK, HERE, os.getcwd(), sys.executable))
     if not os.path.isfile(iso): job.log("ISO not found: " + iso); return False
     local = os.path.join(WORK, "voice-assets", "aliases.local.tsv")
     keep = open(local, "rb").read() if os.path.exists(local) else None
@@ -148,10 +196,12 @@ def install(job, c):
         cmd = ["python3", tool, "--assets", os.path.join(WORK, "voice-assets"), "--model", os.path.join(WORK, "vosk", SMALL_MODEL)]
         if shutil.which("distrobox") and not os.path.exists("/run/.containerenv"): cmd = ["distrobox", "enter", "lifeline-build", "--"] + cmd
         ok = _stream(job, cmd)
-        shutil.copy2(os.path.join(kit, "run.sh"), os.path.join(WORK, "run.sh"))
+        job.log("Installing run.sh and the launcher ...")
+        _install_file(os.path.join(kit, "run.sh"), os.path.join(WORK, "run.sh"))
         inst = os.path.join(WORK, "launcher"); os.makedirs(inst, exist_ok=True)
+        src = os.path.join(kit, "launcher") if os.path.isdir(os.path.join(kit, "launcher")) else HERE   # prefer the kit's (newer) copy
         for f in ("lifeline_launcher.py", "bindings.py", "launcher.sh"):
-            shutil.copy2(os.path.join(HERE, f), os.path.join(inst, f))
+            job.file("  %s %s" % ("installed" if _install_file(os.path.join(src, f), os.path.join(inst, f)) else "already current (same file)", f))
         job.log("Done." if ok else "Aliases step failed (game still playable).")
         return True
     finally:   # never lose the user's own alias fixes, whatever happened above
@@ -161,6 +211,7 @@ def install(job, c):
 
 
 def download_large(job, c):
+    job.open_log("download")
     d = os.path.join(WORK, "vosk"); os.makedirs(d, exist_ok=True)
     if os.path.isdir(os.path.join(d, LARGE_MODEL)): job.log("Already downloaded."); return True
     free = shutil.disk_usage(d).free >> 20
@@ -317,7 +368,9 @@ def run_ui():
             y = 160
             for l in job.tail((H - 220) // 30):
                 scr.blit(S.render(l[:110], True, (180, 190, 200)), (60, y)); y += 30
-            if job.done: scr.blit(F.render("A / B: back", True, (120, 200, 120)), (60, H - 60))
+            if job.done:
+                if not job.ok and job.log_path: scr.blit(S.render("Log: " + job.log_path, True, (230, 120, 100)), (60, H - 95))
+                scr.blit(F.render("A / B: back", True, (120, 200, 120)), (60, H - 60))
         else:
             items = menu_items(c); rowh = 38; top = 110
             first = max(0, min(sel - 6, len(items) - (H - 200) // rowh))
