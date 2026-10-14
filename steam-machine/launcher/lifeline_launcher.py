@@ -32,11 +32,12 @@ QOL = [
     ("always_on",        "5 Always-on listening",       "bool", False, "Voice activity presses talk for you (PS2_VOICE_ALWAYS_ON)"),
     ("large_model",      "6 Large speech model",        "bool", False, "Uses %s if downloaded (better names, slower)" % LARGE_MODEL),
     ("widescreen",       "7 Native widescreen",         "bool", True,  "16:9 hor+: wider 3D view; 2D HUD/menus are stretched (PS2_WIDESCREEN)"),
-    ("faster_loads",     "8 Faster loads / skip FMV / 60fps", "bool", False, "Fast-forward loads, skip seen FMVs"),
+    ("faster_loads",     "8 Faster loads / 60fps",      "bool", False, "Faster loading screens and a 60 fps option"),
     ("vu_fast",          "9 Faster VU interpreter",     "bool", True,  "Faster vector-unit interpreter, same results; off = original (PS2_VU_FAST)"),
     ("button_icons",     "10 Button icons",             ("choice", ["ps2", "xbox", "deck"]), True, "On-screen button glyphs: PS2 (original), Xbox or Steam Deck (PS2_ICON_PACK)"),
     # Available now, but off in a fresh config.ini (DEFAULTS below): opt in.
     ("fast_forward",     "11 Fast-forward (hold)",      "bool", True,  "Hold Tab or Select+R2 to run up to 4x (PS2_FF_MAX); not while talking"),
+    ("fmv_skip",         "12 Skip movies",              "bool", True,  "Start ends a movie (FMV) early; not while a voice command is in progress (PS2_FMV_SKIP)"),
 ]
 # [build] options change the compiled binary: they take effect on the next Install / update.
 BUILD = [("cpu_tuned", "CPU-tuned build (rebuild)",
