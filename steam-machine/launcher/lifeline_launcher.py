@@ -496,7 +496,12 @@ def main(argv=None):
         import bindings; bindings.reset(c); save(c); return 0
     if a.print_config:
         if not os.path.exists(CFG): save(c)
-        print(open(CFG).read()); return 0
+        print(open(CFG).read())
+        on_file = configparser.ConfigParser(inline_comment_prefixes=("#", ";")); on_file.read(CFG)
+        for sec in DEFAULTS:   # defaults not written in the file are still in effect: show them as comments
+            missing = [k for k in DEFAULTS[sec] if not on_file.has_option(sec, k)]
+            if missing: print("# defaults in effect (not in config.ini): " + ", ".join("%s.%s = %s" % (sec, k, c.get(sec, k)) for k in missing))
+        return 0
     if a.dry_run:
         print(" ".join(shlex.quote(x) for x in play_cmd(c, a.new_game))); return 0
     if not os.path.exists(CFG): save(c)

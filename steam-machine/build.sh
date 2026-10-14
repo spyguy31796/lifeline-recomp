@@ -62,6 +62,7 @@ VOICE_SRCS=$(printf '%s;' "$V"/*.cpp "$OURCODE"/input/*.cpp); VOICE_SRCS=${VOICE
 GAME="$SRC/games/$NAME"; GEN="$SRC/generated/$NAME"; NAT="$SRC/build/native-$NAME"
 # shellcheck source=steam-machine/cpu_flags.sh
 . "$KIT/cpu_flags.sh"
+unset CPU_FLAVOR   # set by cpu_flags only; an inherited value would skip the flag selection
 cpu_flags   # decided once: every configure below passes the same compiler/linker flags
 configure() {
   cpu_cmake_args
@@ -76,8 +77,9 @@ BUILD_OK=""
 # shellcheck source=steam-machine/ps2run_backup.sh
 . "$KIT/ps2run_backup.sh"
 restore_ps2run "$NAT" "restored ps2run from an interrupted build" || true
-# A bad .prev that couldn't be restored is not overwritten with the current (possibly half-built) ps2run.
-[ -f "$NAT/ps2run" ] && [ ! -e "$NAT/ps2run.prev" ] && cp -p "$NAT/ps2run" "$NAT/ps2run.prev"
+# A bad .prev (no matching sha256) was moved to ps2run.prev.bad by restore_ps2run, so this build still gets a backup.
+if [ -e "$NAT/ps2run.prev" ]; then mv -f "$NAT/ps2run.prev" "$NAT/ps2run.prev.bad"; echo "moved the unusable ps2run.prev to ps2run.prev.bad" >&2; fi
+backup_ps2run "$NAT" || echo "warning: could not back up ps2run" >&2
 keep_old_ps2run() {
   if [ -z "$BUILD_OK" ]; then restore_ps2run "$NAT" "build failed: the previous ps2run was kept" >&2 || true; fi
 }
@@ -99,7 +101,7 @@ mods=(); [ -d "$GAME/modules" ] && mods=(--modules "$GAME/modules")
 phase "re-translate with overrides"
 FLAVOR_FILE="$WORK/build-flavor" build_native "$SRC" "$NAT" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
     -DPS2_GENERATED="$GEN" -DPS2_EXTRA_SOURCES="$VOICE_SRCS" || exit 1
-BUILD_OK=1; rm -f "$NAT/ps2run.prev"
+BUILD_OK=1; drop_ps2run_backup "$NAT"
 echo "== [time $(date +%H:%M:%S)] build flavor: $(head -1 "$WORK/build-flavor")" >> "$PROG"
 
 phase "relink with voice module"
