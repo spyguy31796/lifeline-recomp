@@ -121,8 +121,26 @@ Keyboard works too (arrows, Enter, Esc).
 | 6 | Large speech model | `large_model` | `PS2_VOICE_VOSK_MODEL=.../vosk-model-en-us-0.22` (if downloaded) | coming soon |
 | 7 | Native widescreen | `widescreen` | `PS2_WIDESCREEN=1` | coming soon |
 | 8 | Faster loads / skip FMV / 60fps | `faster_loads` | `PS2_FAST_LOADS=1` | coming soon |
+| 9 | Faster VU interpreter | `vu_fast` | `PS2_VU_FAST=1` | **works** (off by default; see below) |
 
 "Coming soon" items are greyed out in the launcher; their variables are reserved and ignored by the current build.
+
+**Faster VU interpreter (`[qol] vu_fast`, default off).** From `0006-vu-fast-interpreter-and-check.patch`.
+On the Steam Machine the VU1 thread is the bottleneck in 3D scenes. This option makes the runner use a faster VU1
+microcode interpreter. It caches each instruction's decoded upper *and* lower op (the original caches only the upper),
+dispatches lower ops with computed goto, and keeps the existing skip of MAC/status updates when the uploaded code
+never reads them. Any op without a fast handler goes through the original code, so results are identical. When the
+option is off (or `PS2_VU_FAST=0` is exported), the original interpreter runs. Takes effect at the next launch; no rebuild.
+- **Correctness harness:** `PS2_VU_CHECK=1` runs every fast-path VU1 call twice from the same snapshot: once on the fast
+  path (the faster interpreter, or a build-time translated program), once on the original interpreter. It compares
+  registers, flags, VU1 memory and the GS packets kicked (captured, not sent), logs the first mismatch per program key
+  as `[vu-check] MISMATCH ...`, then keeps the original's result. A summary line is printed at exit.
+  `steam-machine/vu-check.sh STATE:END_FRAME ...` runs it headless on states made on this machine (refuses while
+  the game is open; logs in `logs/vu-check-*.log`).
+- **Self-test:** `PS2_VU_SELFTEST=<n> ps2run` runs n random VU1 programs (no game data) through both interpreters and
+  exits 0 only if all match. `build.sh` runs it after the build (result in `build-progress.log`; a failure only warns,
+  keep the toggle off). Standalone: `steam-machine/tests/test_vu_fast_selftest.sh <ps2run>`.
+- Launcher/run.sh test: `steam-machine/launcher/tests/test_vu_fast.py`.
 
 **First start (Desktop Mode, Konsole):**
 ```sh
@@ -299,10 +317,11 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `0002-ee-overrides-and-voice-stage-a-b.patch` | Patch for ps2-web-recomp: EE function overrides and voice module hooks |
 | `voice/` | Voice module that replaces the original recognizer (Vosk backend, SDL mic, phrase-table reader, natural-sentence matcher) |
 | `voice/tools/` | `fat.py` / `arcx.py` extract the phrase tables from your ISO; `build_aliases.py` builds the local alias table |
-| `steam-machine/` | `build.sh` (+ `patches.sh`), `run.sh`, `make-skip-state.sh` and kit notes |
+| `steam-machine/` | `build.sh` (+ `patches.sh`), `run.sh`, `make-skip-state.sh`, `vu-check.sh` and kit notes |
 | `0003-input-remap-hook.patch` | Patch for ps2-web-recomp: weak hook that lets `input/` remap the controller |
 | `0004-audio-buffer-and-perf-log.patch` | Patch for ps2-web-recomp: configurable audio pacing buffer, underrun counter, `[perf]` log line |
 | `0005-hotkeys-and-clean-quit.patch` | Patch for ps2-web-recomp: hotkey hook (fullscreen, hold-to-quit), card save and audio drain on exit |
+| `0006-vu-fast-interpreter-and-check.patch` | Patch for ps2-web-recomp: faster VU1 interpreter (`PS2_VU_FAST`), `PS2_VU_CHECK` shadow harness, `PS2_VU_SELFTEST` (only touches `runtime/src/vu_micro.cpp`) |
 | `input/` | Controller remap layer and hotkeys (`PS2_INPUT_MAP` parser, chord/hold state, SDL apply) and their unit tests |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 | `steam-machine/cpu_flags.sh` | CPU-tuned build flags (`[build] cpu_tuned`) with generic fallback; test in `steam-machine/tests/` |
