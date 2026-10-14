@@ -8,11 +8,12 @@
 #   env: KIT_NO_CONTAINER=1   build directly on the host (dev box / non-SteamOS)
 #        PORT_ARGS="..."      extra args for port.sh (default: --no-explore)
 #        SKIP_VOSK=1          don't fetch Vosk lib/model
+#        CPU_TUNED=1          -march=native + ThinLTO for this CPU (launcher: [build] cpu_tuned); falls back to generic
 set -euo pipefail
 T0=$SECONDS; TL=$SECONDS; phase() { local m="== [time $(date +%H:%M:%S)] $1: $((SECONDS-TL))s"; echo "$m"; echo "$m" >> "$PROG"; TL=$SECONDS; }
 KIT="$(cd "$(dirname "$0")" && pwd)"
 OURCODE="$(cd "$KIT/.." && pwd)"          # ourcode/: 0001, 0002, voice/
-case "${1:-}" in -h|--help) sed -n 2,12p "$0"; exit 0;; esac
+case "${1:-}" in -h|--help) sed -n 2,13p "$0"; exit 0;; esac
 ISO="$(realpath "${1:-${LIFELINE_ISO:-/home/deck/Downloads/Life Line (USA).iso}}")"
 WORK="$(realpath -m "${2:-${LIFELINE_WORK:-$HOME/lifeline-recomp}}")"
 mkdir -p "$WORK"; PROG="$WORK/build-progress.log"; echo "== [time $(date +%H:%M:%S)] start${KIT_IN_BOX:+ (in container)}" >> "$PROG"; exec > >(tee -a "$WORK/build.log") 2>&1; echo "== [time $(date +%H:%M:%S)] start ($(nproc) cores)"
@@ -27,13 +28,13 @@ IMAGE=${KIT_IMAGE:-quay.io/toolbx/arch-toolbox:latest}   # toolbox image: base p
 if [ -z "${KIT_NO_CONTAINER:-}" ] && [ ! -e /run/.containerenv ] && [ ! -e /.dockerenv ]; then
   command -v distrobox >/dev/null || { echo "distrobox not found (SteamOS 3.5+ ships it); or set KIT_NO_CONTAINER=1" >&2; exit 1; }
   distrobox list | grep -qw "$BOX" || { for i in 1 2 3; do distrobox create -Y -n "$BOX" -i "$IMAGE" && distrobox enter "$BOX" -- true && break; echo "container init failed (try $i), retrying" | tee -a "$PROG"; distrobox rm -f "$BOX" || true; sleep 20; done; }
-  exec distrobox enter "$BOX" -- env KIT_IN_BOX=1 PORT_ARGS="${PORT_ARGS:-}" SKIP_VOSK="${SKIP_VOSK:-}" bash "$0" "$ISO" "$WORK"
+  exec distrobox enter "$BOX" -- env KIT_IN_BOX=1 PORT_ARGS="${PORT_ARGS:-}" SKIP_VOSK="${SKIP_VOSK:-}" CPU_TUNED="${CPU_TUNED:-0}" CPU_MARCH="${CPU_MARCH:-}" bash "$0" "$ISO" "$WORK"
 fi
 
 # --- Dependencies (inside the container only) --------------------------------
 if [ -n "${KIT_IN_BOX:-}" ] && command -v pacman >/dev/null; then
   # rootless podman: "sudo" here is root only inside the container
-  for i in 1 2 3; do sudo pacman -Syu --disable-download-timeout --needed --noconfirm git cmake ninja clang python python-pip sdl2 libpulse pipewire vulkan-radeon vulkan-icd-loader curl unzip p7zip && break; sleep 15; done
+  for i in 1 2 3; do sudo pacman -Syu --disable-download-timeout --needed --noconfirm git cmake ninja clang python python-pip sdl2 libpulse pipewire vulkan-radeon vulkan-icd-loader lld curl unzip p7zip && break; sleep 15; done
 fi
 phase deps
 for t in git cmake ninja clang++ python3 curl unzip; do command -v $t >/dev/null || { echo "missing $t" >&2; exit 1; }; done
@@ -59,27 +60,35 @@ V="$OURCODE/voice"
 # every .cpp in voice/ and input/ (Vosk is dlopen'ed at run time, so no build-time libvosk)
 VOICE_SRCS=$(printf '%s;' "$V"/*.cpp "$OURCODE"/input/*.cpp); VOICE_SRCS=${VOICE_SRCS%;}   # + controller remap layer
 GAME="$SRC/games/$NAME"; GEN="$SRC/generated/$NAME"; NAT="$SRC/build/native-$NAME"
+# shellcheck source=steam-machine/cpu_flags.sh
+. "$KIT/cpu_flags.sh"
+cpu_flags   # decided once: every configure below passes the same compiler/linker flags
 configure() {
+  cpu_cmake_args
   cmake -S "$SRC" -B "$NAT" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
-      -DPS2_GENERATED="$GEN" -DPS2_EXTRA_SOURCES="$VOICE_SRCS" >/dev/null
+      -DPS2_GENERATED="$GEN" -DPS2_EXTRA_SOURCES="$VOICE_SRCS" "${CPU_CMAKE_ARGS[@]}" >/dev/null
 }
+configure_existing() { [ ! -f "$NAT/build.ninja" ] || configure; }
 # Keep a working game if any compile/link below fails: back up ps2run, put it back unless we finish.
 BUILD_OK=""
 # A ps2run.prev left behind means an earlier run was killed (SIGKILL skips the restore below): it is the
 # last good binary, so put it back first.
-if [ -f "$NAT/ps2run.prev" ]; then mv -f "$NAT/ps2run.prev" "$NAT/ps2run"; echo "restored ps2run from an interrupted build"; fi
-[ -f "$NAT/ps2run" ] && cp -p "$NAT/ps2run" "$NAT/ps2run.prev"
+# shellcheck source=steam-machine/ps2run_backup.sh
+. "$KIT/ps2run_backup.sh"
+restore_ps2run "$NAT" "restored ps2run from an interrupted build" || true
+# A bad .prev that couldn't be restored is not overwritten with the current (possibly half-built) ps2run.
+[ -f "$NAT/ps2run" ] && [ ! -e "$NAT/ps2run.prev" ] && cp -p "$NAT/ps2run" "$NAT/ps2run.prev"
 keep_old_ps2run() {
-  if [ -z "$BUILD_OK" ] && [ -f "$NAT/ps2run.prev" ]; then
-    mv -f "$NAT/ps2run.prev" "$NAT/ps2run"; echo "build failed: the previous ps2run was kept" >&2
-  fi
+  if [ -z "$BUILD_OK" ]; then restore_ps2run "$NAT" "build failed: the previous ps2run was kept" >&2 || true; fi
 }
 trap keep_old_ps2run EXIT
-# An existing build dir has the source list of the previous kit: refresh it before port.sh compiles,
-# so new files (e.g. input/*.cpp) are part of the first link.
-[ -f "$NAT/build.ninja" ] && configure
+# An existing build dir has the source list and flags of the previous build: refresh both before port.sh
+# compiles, so new files (e.g. input/*.cpp) are linked, a flavor switch compiles once, and stale cached flags
+# (e.g. -fuse-ld=lld with lld gone) can't fail the first compile. port.sh (upstream) configures a new build
+# dir itself without our flags, so the very first install of a tuned build compiles twice.
+configure_existing
 # shellcheck disable=SC2086
-"$SRC/scripts/port.sh" "$NAME" "$ISO" --native-only ${PORT_ARGS:---no-explore}
+port_with_fallback configure_existing "$SRC/scripts/port.sh" "$NAME" "$ISO" --native-only ${PORT_ARGS:---no-explore}
 phase "port.sh (tools+translate+first compile)"
 
 # --- Re-translate with the voice overrides, relink with the voice module ------
@@ -88,9 +97,10 @@ mods=(); [ -d "$GAME/modules" ] && mods=(--modules "$GAME/modules")
 "$SRC/build/tools/eerecomp" "$ELF" --entries "$GAME/entries.txt" "${mods[@]}" \
     --overrides "$V/overrides.txt" --out "$GEN" | tail -1
 phase "re-translate with overrides"
-configure
-ninja -C "$NAT" ps2run > "$NAT/ninja.log" 2>&1 || { tail -30 "$NAT/ninja.log"; exit 1; }
+FLAVOR_FILE="$WORK/build-flavor" build_native "$SRC" "$NAT" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
+    -DPS2_GENERATED="$GEN" -DPS2_EXTRA_SOURCES="$VOICE_SRCS" || exit 1
 BUILD_OK=1; rm -f "$NAT/ps2run.prev"
+echo "== [time $(date +%H:%M:%S)] build flavor: $(head -1 "$WORK/build-flavor")" >> "$PROG"
 
 phase "relink with voice module"
 # --- Vosk 0.3.45 + model (fetched on the device, never bundled; loaded at run time) ---

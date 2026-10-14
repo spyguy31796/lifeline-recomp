@@ -227,6 +227,38 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 - From `0004-audio-buffer-and-perf-log.patch` (`host/audio_pacing.hpp` + `host/window.cpp`; unit test in
   `tests/test_audio_pacing.cpp`); `build.sh` applies it (also to existing checkouts).
 
+### CPU-tuned build (optional, rebuild)
+- Launcher item **CPU-tuned build (rebuild)**, `config.ini`:
+  ```ini
+  [build]
+  cpu_tuned = 1      # default 0
+  ```
+  or `lifeline_launcher.py --set build.cpu_tuned=1`.
+- It changes the compiled binary, so it only takes effect on the next **Install / update**. The launcher shows
+  `ON (rebuild)` / `off (rebuild)` and a hint until the build matches the setting.
+- When on, `build.sh` (env `CPU_TUNED=1`) compiles with `-march=native -flto=thin` and links with `-fuse-ld=lld`
+  (ThinLTO, tuned for this machine's CPU; `CPU_MARCH=znver4` etc. overrides `native`). PGO is not used.
+  If the tuned build fails (for example an LTO/linker error), it rebuilds generic and records `generic-fallback`;
+  without `ld.lld` it uses `-march` only. The flavor actually built is in `~/lifeline-recomp/build-flavor`, and the
+  flags plus flavor are written to `build.log`, `build-progress.log` and the launcher's `logs/install-*.log`.
+- **Warning: `-march=native` binaries are tied to the CPU they were built on.** Copied to another machine (or a
+  different Steam Machine / handheld model), they may crash at start with "Illegal instruction". Don't share or
+  copy a tuned `ps2run`; rebuild on each machine. `build-flavor` records the CPU model (`cpu=...`), and when a
+  tuned build finds a different CPU the launcher prompts at start and shows `ON (rebuild: new CPU)` until
+  Install / update rebuilds it. Generic builds run anywhere and never prompt.
+- `CPU_MARCH` (env for `build.sh`) replaces `native` with a fixed target, e.g. `CPU_MARCH=znver2`. Pick one that
+  every machine you run on supports (too new = illegal instruction; `x86-64-v3` is a safe AVX2 baseline); the
+  launcher doesn't set it, and the CPU check above still applies to the machine that built it.
+- Every configure (before `port.sh` and the final one) passes the same `-DCMAKE_CXX_FLAGS` /
+  `-DCMAKE_EXE_LINKER_FLAGS`, so switching flavor recompiles once and stale cached flags (e.g. `-fuse-ld=lld` after
+  lld was removed) are replaced before the first compile. If the tuned first compile fails anyway, the build falls
+  back to generic right there. The first install into a new build dir compiles twice when tuned (`port.sh`
+  configures it without our flags).
+- Expected gain is modest; see the PR for measured numbers. Hot spots on the Steam Machine are the interpreted VU1
+  microcode and the EE thread waiting on it, which a compiler flag can only speed up a little.
+- Logic in `steam-machine/cpu_flags.sh`; tests: `bash steam-machine/tests/test_cpu_flags.sh`,
+  `python3 steam-machine/launcher/tests/test_cpu_tuned.py`.
+
 ## Known limits
 - Accuracy depends on the small Vosk model and your mic. Natural-sentence matching was tuned with synthetic voices plus one player's sessions.
 - A misheard word can still map to a different command that's valid in the current room.
@@ -251,8 +283,12 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 - The previous `ps2run` is copied to `ps2run.prev` and put back if any compile or link fails ("build failed: the
   previous ps2run was kept"). A killed build (SIGKILL, power loss) can't run that restore; the next run finds
   `ps2run.prev` and puts it back first ("restored ps2run from an interrupted build"), or `mv` it back by hand.
+  The restore copies to `ps2run.tmp` and renames it over `ps2run`, and skips (with a warning) a `.prev` that is
+  empty or not executable. A marker that claims a patch the tree lacks makes the apply loop start over at the
+  first missing patch instead of failing.
 - Tests: `steam-machine/tests/patch-marker-test.sh` (fast, synthetic checkout: unpatched, partial, older kit,
-  name-only / corrupt / CRLF marker, changed patch, apply-failure fallback) and
+  name-only / corrupt / CRLF marker, changed patch, apply-failure fallback,
+  stale marker restart), `bash steam-machine/tests/test_ps2run_restore.sh` (ps2run.prev restore) and
   `steam-machine/tests/build-upgrade-test.sh <built-workdir> <iso> <scratch-dir>` (previous release -> new
   build.sh twice, then a source that can't link).
 
@@ -269,6 +305,7 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `0005-hotkeys-and-clean-quit.patch` | Patch for ps2-web-recomp: hotkey hook (fullscreen, hold-to-quit), card save and audio drain on exit |
 | `input/` | Controller remap layer and hotkeys (`PS2_INPUT_MAP` parser, chord/hold state, SDL apply) and their unit tests |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
+| `steam-machine/cpu_flags.sh` | CPU-tuned build flags (`[build] cpu_tuned`) with generic fallback; test in `steam-machine/tests/` |
 
 ## License
 Our code is MIT (see `LICENSE`). ps2-web-recomp is MIT and is not vendored: `build.sh` clones it and applies our patches.
