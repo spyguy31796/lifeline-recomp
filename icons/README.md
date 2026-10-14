@@ -38,7 +38,7 @@ screen, dump, and add lines (below).
 `build.sh` replaces `<install>/icons/` with the shipped packs on every Install / update, so don't edit it. Put your own
 pack in `<install>/icons.local/<name>/` (an `icons.txt` plus its icon files); build.sh never touches `icons.local/`.
 Select it with `button_icons = <name>` under `[qol]` in `config.ini` (letters, digits, `-` and `_`). The launcher's list
-only offers ps2 / xbox / deck and shows another name as ps2, but leaves it as is unless you change item 9. A name in
+only offers ps2 / xbox / deck and shows another name as ps2, but leaves it as is unless you change item 10. A name in
 `icons.local/` wins over a shipped pack of the same name.
 
 `PS2_ICON_PACK=<dir>` in the environment overrides the config. An **empty** `PS2_ICON_PACK=` does not: run.sh fills an
