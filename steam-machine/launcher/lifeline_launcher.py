@@ -42,7 +42,7 @@ DEFAULTS = {"launch": {"skip_tutorial": "0", "fullscreen": "1", "debug": "1", "v
 
 
 def load():
-    c = configparser.ConfigParser()
+    c = configparser.ConfigParser(inline_comment_prefixes=("#", ";"))   # ' # note' after a value is a comment
     c.read_dict(DEFAULTS)
     c.read(CFG)
     return c
@@ -150,7 +150,7 @@ def install(job, c):
         ok = _stream(job, cmd)
         shutil.copy2(os.path.join(kit, "run.sh"), os.path.join(WORK, "run.sh"))
         inst = os.path.join(WORK, "launcher"); os.makedirs(inst, exist_ok=True)
-        for f in ("lifeline_launcher.py", "launcher.sh"):
+        for f in ("lifeline_launcher.py", "bindings.py", "launcher.sh"):
             shutil.copy2(os.path.join(HERE, f), os.path.join(inst, f))
         job.log("Done." if ok else "Aliases step failed (game still playable).")
         return True
@@ -199,7 +199,7 @@ def menu_items(c):
     m = [("play", "PLAY (continue / memory card)", built), ("new", "New game", built)]
     m += [("launch:" + k, lbl, True) for k, lbl in LAUNCH]
     m += [("qol:" + k, lbl, avail) for k, lbl, kind, avail, _ in QOL]
-    m += [("iso", "ISO", True), ("install", "Install / update from ISO", True),
+    m += [("bindings", "Controller bindings", True), ("iso", "ISO", True), ("install", "Install / update from ISO", True),
           ("large", "Download large speech model (~1.8 GB)", True), ("quit", "Quit", True)]
     return m
 
@@ -210,6 +210,7 @@ def value_of(c, key):
         k = key[4:]; kind = next(q[2] for q in QOL if q[0] == k)
         if kind == "bool": return "ON" if c.get("qol", k) == "1" else "off"
         return c.get("qol", k) + "x"
+    if key == "bindings": return "custom" if c.has_section("bindings") else "default"
     if key == "iso": return os.path.basename(c.get("paths", "iso"))
     if key == "large": return "installed" if os.path.isdir(os.path.join(WORK, "vosk", LARGE_MODEL)) else ""
     return ""
@@ -264,6 +265,9 @@ def run_ui():
             pygame.display.quit()
             r = subprocess.call(play_cmd(c, new_game=(key == "new")), env=play_env(c))
             return "quit" if r == 0 else "relaunch"
+        if key == "bindings":
+            import bindings
+            bindings.screen(pygame, scr, (F, S, T), c, save); pygame.event.clear(); return
         if key == "install": job = Job("Install / update", lambda j: install(j, c))
         elif key == "large": job = Job("Large speech model", lambda j: download_large(j, c))
         elif key == "quit": return "quit"
@@ -337,6 +341,7 @@ def main(argv=None):
     ap.add_argument("--print-config", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="print the run.sh command PLAY would run")
     ap.add_argument("--new-game", action="store_true", help="with --dry-run: the New game command")
+    ap.add_argument("--reset-bindings", action="store_true", help="drop [bindings] (built-in layout) and exit")
     ap.add_argument("--fullscreen", action="store_true", help="force a fullscreen launcher window")
     a = ap.parse_args(argv)
     c = load()
@@ -344,9 +349,17 @@ def main(argv=None):
         for x in a.set:
             k, sep, v = x.partition("=")
             sec, dot, opt = k.partition(".")
+            if sec == "bindings" and sep and dot:
+                import bindings
+                bad = bindings.validate(opt, v)
+                if bad: ap.error("--set bindings.%s: %s" % (opt, bad))
+                v = bindings.strip_comment(v) or "none"
+                bindings.set_binding(c, opt, v); continue
             if not sep or not dot or not c.has_section(sec): ap.error("bad --set %r (want section.key=value)" % x)
             c.set(sec, opt, v)
         save(c); return 0
+    if a.reset_bindings:
+        import bindings; bindings.reset(c); save(c); return 0
     if a.print_config:
         if not os.path.exists(CFG): save(c)
         print(open(CFG).read()); return 0

@@ -46,6 +46,10 @@ if [ ! -d "$SRC/.git" ]; then
   git -C "$SRC" apply --index "$OURCODE/0001-usbmic-hle-and-deci2-nohost.patch"
   git -C "$SRC" apply --index "$OURCODE/0002-ee-overrides-and-voice-stage-a-b.patch"
 fi
+# 0003 (controller remap hook) also applies to existing checkouts, once.
+if ! git -C "$SRC" apply --reverse --check "$OURCODE/0003-input-remap-hook.patch" 2>/dev/null; then
+  git -C "$SRC" apply --index "$OURCODE/0003-input-remap-hook.patch"
+fi
 phase clone+patch
 [ "$(git -C "$SRC" rev-parse HEAD)" = "$COMMIT" ] || { echo "unexpected commit in $SRC" >&2; exit 1; }
 
@@ -57,8 +61,8 @@ phase "port.sh (tools+translate+first compile)"
 
 # --- Re-translate with the voice overrides, relink with the voice module ------
 V="$OURCODE/voice"
-# every .cpp in voice/ (Vosk is dlopen'ed at run time, so no build-time libvosk)
-VOICE_SRCS=$(printf '%s;' "$V"/*.cpp); VOICE_SRCS=${VOICE_SRCS%;}
+# every .cpp in voice/ and input/ (Vosk is dlopen'ed at run time, so no build-time libvosk)
+VOICE_SRCS=$(printf '%s;' "$V"/*.cpp "$OURCODE"/input/*.cpp); VOICE_SRCS=${VOICE_SRCS%;}   # + controller remap layer
 GAME="$SRC/games/$NAME"; GEN="$SRC/generated/$NAME"; NAT="$SRC/build/native-$NAME"
 ELF="$GAME/disc/$(sed -n 's/^BOOT2 *= *//p' "$GAME/disc/SYSTEM.CNF" | tr -d '\r' | sed 's/.*\\//; s/;.*//')"
 mods=(); [ -d "$GAME/modules" ] && mods=(--modules "$GAME/modules")

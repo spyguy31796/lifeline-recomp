@@ -1,0 +1,31 @@
+diff --git a/host/window.cpp b/host/window.cpp
+index f5e8d58..6b429c5 100644
+--- a/host/window.cpp
++++ b/host/window.cpp
+@@ -52,6 +52,16 @@ constexpr PadBinding kPadButtons[] = {
+     {SDL_CONTROLLER_BUTTON_DPAD_LEFT, kLeft},   {SDL_CONTROLLER_BUTTON_DPAD_RIGHT, kRight},
+ };
+ 
++}  // namespace
++
++// Optional remap layer (Lifeline Recomp ourcode/input, linked via PS2_EXTRA_SOURCES). Weak: when it is
++// not linked, or returns false (PS2_INPUT_MAP unset), the built-in pad table below is used unchanged.
++extern "C" __attribute__((weak)) bool lifeline_input_remap(SDL_GameController *pad, const Uint8 *keys, std::uint16_t *buttons,
++                                                           std::uint8_t *l2, std::uint8_t *r2, std::uint8_t *lx, std::uint8_t *ly,
++                                                           std::uint8_t *rx, std::uint8_t *ry);
++
++namespace {
++
+ SDL_Window *g_window = nullptr;
+ SDL_Renderer *g_renderer = nullptr;
+ SDL_Texture *g_texture = nullptr;
+@@ -153,7 +163,8 @@ void poll() {
+     if (keys[SDL_SCANCODE_RIGHT]) lx = 0xFF;
+     if (keys[SDL_SCANCODE_UP]) ly = 0x00;
+     if (keys[SDL_SCANCODE_DOWN]) ly = 0xFF;
+-    if (g_pad) {
++    if (lifeline_input_remap && lifeline_input_remap(g_pad, keys, &pressed, &l2, &r2, &lx, &ly, &rx, &ry)) {
++    } else if (g_pad) {
+         for (const PadBinding &b : kPadButtons)
+             if (SDL_GameControllerGetButton(g_pad, b.button)) pressed |= b.mask;
+         const auto trigger = [&](SDL_GameControllerAxis a, std::uint16_t bit, std::uint8_t &pressure) {
