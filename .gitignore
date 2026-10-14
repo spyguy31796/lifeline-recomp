@@ -44,3 +44,5 @@ private/
 *.png
 *.wav
 __pycache__/
+# texture dumps (PS2_TEX_DUMP): game-derived, never commit
+tex-dump/

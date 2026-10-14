@@ -44,7 +44,7 @@ SRC="$WORK/ps2-web-recomp"
 # Our patches, oldest first; see patches.sh for how applied ones are tracked.
 PATCHES=(0001-usbmic-hle-and-deci2-nohost.patch 0002-ee-overrides-and-voice-stage-a-b.patch 0003-input-remap-hook.patch
          0004-audio-buffer-and-perf-log.patch 0005-hotkeys-and-clean-quit.patch 0006-vu-fast-interpreter-and-check.patch
-         0007-save-state-slots.patch)
+         0007-save-state-slots.patch 0008-texture-upload-hook.patch)
 if [ ! -d "$SRC/.git" ]; then
   git clone "$UPSTREAM" "$SRC"
   git -C "$SRC" checkout --detach "$COMMIT"
@@ -59,7 +59,7 @@ phase clone+patch
 NAME=lifeline
 V="$OURCODE/voice"
 # every .cpp in voice/ and input/ (Vosk is dlopen'ed at run time, so no build-time libvosk)
-VOICE_SRCS=$(printf '%s;' "$V"/*.cpp "$OURCODE"/input/*.cpp); VOICE_SRCS=${VOICE_SRCS%;}   # + controller remap layer
+VOICE_SRCS=$(printf '%s;' "$V"/*.cpp "$OURCODE"/input/*.cpp "$OURCODE"/icons/*.cpp); VOICE_SRCS=${VOICE_SRCS%;}   # + controller remap layer
 GAME="$SRC/games/$NAME"; GEN="$SRC/generated/$NAME"; NAT="$SRC/build/native-$NAME"
 # shellcheck source=steam-machine/cpu_flags.sh
 . "$KIT/cpu_flags.sh"
@@ -179,5 +179,6 @@ PS2_VOICE_VOSK_LIB="$VOSK_DIR/vosk/libvosk.so"
 PS2_VOICE_ASSETS="$ASSETS"
 ENV
 install -m755 "$KIT/run.sh" "$WORK/run.sh"
+rm -rf "$WORK/icons.new"; cp -r "$OURCODE/icons/packs" "$WORK/icons.new" && rm -rf "$WORK/icons" && mv "$WORK/icons.new" "$WORK/icons"   # button icon packs (our art)
 echo "== [time] total: $((SECONDS-T0))s" | tee -a "$PROG"
 echo "== built. Launch with: $WORK/run.sh   (game-derived build; keep it on this machine)"

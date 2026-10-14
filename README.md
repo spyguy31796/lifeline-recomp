@@ -122,6 +122,7 @@ Keyboard works too (arrows, Enter, Esc).
 | 7 | Native widescreen | `widescreen` | `PS2_WIDESCREEN=1` | coming soon |
 | 8 | Faster loads / skip FMV / 60fps | `faster_loads` | `PS2_FAST_LOADS=1` | coming soon |
 | 9 | Faster VU interpreter | `vu_fast` | `PS2_VU_FAST=1` | **works** (off by default; see below) |
+| 10 | Button icons (PS2 / Xbox / Steam Deck) | `button_icons` | `PS2_ICON_PACK=<dir>` | works for the OPTION menu (rebuild once); see `icons/README.md` |
 
 "Coming soon" items are greyed out in the launcher; their variables are reserved and ignored by the current build.
 
@@ -352,6 +353,8 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `0005-hotkeys-and-clean-quit.patch` | Patch for ps2-web-recomp: hotkey hook (fullscreen, hold-to-quit), card save and audio drain on exit |
 | `0006-vu-fast-interpreter-and-check.patch` | Patch for ps2-web-recomp: faster VU1 interpreter (`PS2_VU_FAST`), `PS2_VU_CHECK` shadow harness, `PS2_VU_SELFTEST` (only touches `runtime/src/vu_micro.cpp`) |
 | `0007-save-state-slots.patch` | Patch for ps2-web-recomp: `request_state()`, a save/load at the next frame boundary for the save-slot hotkeys |
+| `0008-texture-upload-hook.patch` | Patch for ps2-web-recomp: optional hook on small host→GS texture uploads (button icon packs) |
+| `icons/` | Button icon packs (our art), manifest/blit code, texture-dump tool, tests |
 | `input/` | Controller remap layer and hotkeys (`PS2_INPUT_MAP` parser, chord/hold state, SDL apply) and their unit tests |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 | `steam-machine/cpu_flags.sh` | CPU-tuned build flags (`[build] cpu_tuned`) with generic fallback; test in `steam-machine/tests/` |
