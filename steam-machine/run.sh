@@ -32,7 +32,7 @@ if on large_model && [ -z "$_m" ] && [ -d "$VOSK_DIR/vosk-model-en-us-0.22" ]; t
 on widescreen    && : "${PS2_WIDESCREEN:=1}"                            # item 7 (reserved)
 on faster_loads  && : "${PS2_FAST_LOADS:=1}"                            # item 8 (reserved)
 [ "$(cfg launch voice_off)" = 1 ] && : "${PS2_VOICE_OFF:=1}"
-# Controller bindings: [bindings] -> PS2_INPUT_MAP="circle=b,paddle1;lx=leftx;..." (read by ourcode/input in ps2run)
+# Controller bindings + hotkeys: [bindings] -> PS2_INPUT_MAP="circle=b,paddle1;lx=leftx;hk_quit=back&start@1500;..." (read by ourcode/input in ps2run)
 if [ -f "$CFG" ] && [ -z "${PS2_INPUT_MAP+x}" ]; then
   PS2_INPUT_MAP=$(awk -F= '/^\[/{in_=($0=="[bindings]")} in_ && NF>=2 && $1!~/^[ \t]*[#;]/ { k=$1; v=substr($0,index($0,"=")+1); sub(/[ \t]+[#;].*$/,"",v); gsub(/[ \t\r]/,"",k); gsub(/^[ \t]+|[ \t\r]+$/,"",v); out=out (out?";":"") k "=" v } END{print out}' "$CFG")
 fi

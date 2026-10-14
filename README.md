@@ -136,8 +136,8 @@ from `~/lifeline-recomp/launcher` (the Steam shortcut). Update once by running t
 `lifeline_launcher.py` into `~/lifeline-recomp/launcher/`. Each install writes `~/lifeline-recomp/logs/install-*.log`.
 
 **Add to Steam:** Desktop Mode → Steam → *Games → Add a Non-Steam Game* → *Browse* → `~/lifeline-recomp/launcher/launcher.sh`
-(or the kit copy) → Add, rename it "Lifeline". In Game Mode it opens fullscreen; PLAY starts `run.sh` with your settings and
-returns to the launcher if the game exits with an error.
+(or the kit copy) → Add, rename it "Lifeline". In Game Mode it opens fullscreen; PLAY starts `run.sh` with your settings,
+waits for it, and returns to the launcher menu when the game exits (the quit hotkey exits 0; any other exit code is shown).
 
 ### Controller bindings
 Launcher → **Controller bindings** remaps every PS2 pad input: Circle (push-to-talk), Cross, Square, Triangle, the
@@ -164,6 +164,37 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
   layout passes them through (or maps them to a button you then bind here).
 - The game side is `input/` (our code) plus `0003-input-remap-hook.patch`, a weak hook in the runner's input poll;
   `build.sh` applies it (also to existing checkouts) and links `input/*.cpp`. Rebuild once (Install / update) to get it.
+
+### In-game hotkeys
+| Action | Keyboard | Controller |
+|---|---|---|
+| Toggle fullscreen | F11, Alt+Enter | hold Select (Back/View), press R3 (right stick click) |
+| Quit to the launcher | Ctrl+Q, or hold Esc 1 s | hold Select + Start 1.5 s |
+
+- Quit is a clean shutdown: the emulator halts, a memory card written in the last frames is saved
+  (`[mc] card saved on exit`), queued sound plays out and the audio device is closed, then the runner exits 0, so
+  `run.sh` and the launcher return to the launcher menu. Nothing is killed.
+- While a quit hold is under way the window title shows `Hold to quit... NN%` (and, with the SDL presenter, a bar along
+  the bottom edge); letting go of any button cancels it. The default WebGPU presenter draws no overlay, and in Game
+  Mode the title is not visible, so the hold itself is the guard.
+- **Chord buttons and the game:** once every button of a chord is down, those buttons are kept from the game until
+  all of them are released (including the built-in keyboard keys, e.g. Enter = START during Alt+Enter). The button
+  pressed *first* reaches the game until the chord is complete, because the layer can't know yet that a chord is
+  coming: pressing Select a moment before Start/R3 gives the game a brief Select press. Press the buttons together
+  if that matters.
+- Rebind them in Launcher → Controller bindings → **Hotkey: fullscreen** / **Hotkey: quit (hold)**: hold every
+  button (or key) of the new chord together, then release; the first release binds them all (up to 4). A captured
+  quit chord gets a 1.5 s hold. Holding a chord 4 s cancels. **Y** adds another chord, **X** disables the hotkey.
+- Stored in `config.ini [bindings]` as `hk_fullscreen` / `hk_quit` and passed in `PS2_INPUT_MAP` like the other
+  bindings (env > config). Format: chords separated by `,`, inputs in a chord joined by `&`, optional `@<ms>` hold
+  (0-10000): `hk_quit = back&start@1500, key:Escape@1000`. `key:Ctrl`, `key:Alt`, `key:Shift`, `key:GUI` mean either
+  side. `none` disables; a hotkey left out keeps its default. The keys `&` and `@` can't be bound.
+- Game side: `input/hotkeys.cpp` (chord/hold state) and `lifeline_hotkeys()` in `input/input_map_sdl.cpp`, hooked by
+  `0005-hotkeys-and-clean-quit.patch` (weak hook in the runner's poll, forced memory-card save at halt, audio drain);
+  `build.sh` applies it. Rebuild once (Install / update) to get it.
+- Tests: `input/tests/test_hotkeys.cpp` (parser, chord/hold timing), launcher `tests/test_bindings.py` (chord
+  capture) and `tests/test_play.py` (menu after the game exits), and on a built install
+  `xvfb-run -a steam-machine/tests/hotkey-quit-smoke.sh` (Esc tap doesn't quit, F11, Esc hold quits with exit 0).
 
 **Headless checks:** `launcher.sh --print-config`, `launcher.sh --dry-run`, `launcher.sh --set qol.resolution_scale=2`,
 and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.sh would pass and exits.
@@ -206,7 +237,8 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `steam-machine/` | `build.sh`, `run.sh`, `make-skip-state.sh` and kit notes |
 | `0003-input-remap-hook.patch` | Patch for ps2-web-recomp: weak hook that lets `input/` remap the controller |
 | `0004-audio-buffer-and-perf-log.patch` | Patch for ps2-web-recomp: configurable audio pacing buffer, underrun counter, `[perf]` log line |
-| `input/` | Controller remap layer (`PS2_INPUT_MAP` parser + SDL apply) and its unit test |
+| `0005-hotkeys-and-clean-quit.patch` | Patch for ps2-web-recomp: hotkey hook (fullscreen, hold-to-quit), card save and audio drain on exit |
+| `input/` | Controller remap layer and hotkeys (`PS2_INPUT_MAP` parser, chord/hold state, SDL apply) and their unit tests |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 
 ## License

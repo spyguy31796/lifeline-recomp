@@ -1,0 +1,177 @@
+diff --git a/host/window.cpp b/host/window.cpp
+index 98bae30..cc1e16c 100644
+--- a/host/window.cpp
++++ b/host/window.cpp
+@@ -60,9 +60,16 @@ constexpr PadBinding kPadButtons[] = {
+ extern "C" __attribute__((weak)) bool lifeline_input_remap(SDL_GameController *pad, const Uint8 *keys, std::uint16_t *buttons,
+                                                            std::uint8_t *l2, std::uint8_t *r2, std::uint8_t *lx, std::uint8_t *ly,
+                                                            std::uint8_t *rx, std::uint8_t *ry);
++// Optional hotkeys (same layer): fullscreen toggle and hold-to-quit. Clears chord buttons from *buttons,
++// sets *quit_progress (0..1 while a quit hold is under way) and returns kHotkey* bits.
++extern "C" __attribute__((weak)) int lifeline_hotkeys(SDL_GameController *pad, const Uint8 *keys, std::uint16_t *buttons, float *quit_progress);
+ 
+ namespace {
+ 
++constexpr int kHotkeyFullscreen = 1, kHotkeyQuit = 2;
++std::atomic<float> g_quit_progress{0.0f};
++Uint8 g_tapped[SDL_NUM_SCANCODES] = {};   // keys pressed since the last poll, so a quick tap is not missed
++
+ SDL_Window *g_window = nullptr;
+ SDL_Renderer *g_renderer = nullptr;
+ SDL_Texture *g_texture = nullptr;
+@@ -134,15 +141,18 @@ void rumble() {
+     SDL_GameControllerRumble(g_pad, static_cast<Uint16>(strong * 65535.0), weak ? 0xFFFF : 0, strong > 0.0 || weak ? 200 : 0);
+ }
+ 
++void toggle_fullscreen() {
++    const bool full = SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN;
++    SDL_SetWindowFullscreen(g_window, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
++    SDL_ShowCursor(full ? SDL_ENABLE : SDL_DISABLE);
++}
++
+ void poll() {
+     SDL_Event e;
+     while (SDL_PollEvent(&e)) {
+         if (e.type == SDL_QUIT) ps2::halt("window closed");
+-        if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F11 && !e.key.repeat) {
+-            const bool full = SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN;
+-            SDL_SetWindowFullscreen(g_window, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+-            SDL_ShowCursor(full ? SDL_ENABLE : SDL_DISABLE);
+-        }
++        if (!lifeline_hotkeys && e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F11 && !e.key.repeat) toggle_fullscreen();
++        if (e.type == SDL_KEYDOWN && e.key.keysym.scancode < SDL_NUM_SCANCODES) g_tapped[e.key.keysym.scancode] = 1;
+         if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED && g_gpu_present) {
+             int w = 0, h = 0;
+             SDL_GetWindowSizeInPixels(g_window, &w, &h);
+@@ -181,6 +191,22 @@ void poll() {
+         rx = axis(SDL_CONTROLLER_AXIS_RIGHTX);
+         ry = axis(SDL_CONTROLLER_AXIS_RIGHTY);
+     }
++    if (lifeline_hotkeys) {
++        float progress = 0.0f;
++        static Uint8 seen[SDL_NUM_SCANCODES];
++        for (int i = 0; i < SDL_NUM_SCANCODES; ++i) seen[i] = keys[i] | g_tapped[i];
++        std::fill(std::begin(g_tapped), std::end(g_tapped), Uint8{0});
++        const int fired = lifeline_hotkeys(g_pad, seen, &pressed, &progress);
++        if (fired & kHotkeyFullscreen) toggle_fullscreen();
++        if (fired & kHotkeyQuit) ps2::halt("quit hotkey");
++        const int step = static_cast<int>(progress * 10.0f), last_step = static_cast<int>(g_quit_progress.load() * 10.0f);
++        g_quit_progress.store(progress);
++        if (step != last_step) {
++            char title[64];
++            std::snprintf(title, sizeof title, progress > 0.0f ? "Hold to quit... %d%%" : "ps2-web-recomp", step * 10);
++            SDL_SetWindowTitle(g_window, title);
++        }
++    }
+     rumble();
+     static std::uint64_t last = ~0ull;
+     const std::uint64_t state = pressed | (static_cast<std::uint64_t>(rx) << 16) | (static_cast<std::uint64_t>(ry) << 24) | (static_cast<std::uint64_t>(lx) << 32) |
+@@ -207,6 +233,15 @@ void show_pixels(const std::uint32_t *rgba, std::uint32_t w, std::uint32_t h) {
+     SDL_UpdateTexture(g_texture, nullptr, rgba, static_cast<int>(w * 4));
+     SDL_RenderClear(g_renderer);
+     SDL_RenderCopy(g_renderer, g_texture, nullptr, nullptr);
++    if (const float p = g_quit_progress.load(); p > 0.0f) {   // hold-to-quit bar along the bottom edge
++        const int lw = static_cast<int>(w), lh = static_cast<int>(w) * 3 / 4;
++        const SDL_Rect back{0, lh - lh / 40, lw, lh / 40}, bar{0, lh - lh / 40, static_cast<int>(lw * p), lh / 40};
++        SDL_SetRenderDrawColor(g_renderer, 40, 40, 40, 255);
++        SDL_RenderFillRect(g_renderer, &back);
++        SDL_SetRenderDrawColor(g_renderer, 230, 60, 50, 255);
++        SDL_RenderFillRect(g_renderer, &bar);
++        SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
++    }
+     SDL_RenderPresent(g_renderer);
+ }
+ 
+@@ -265,6 +300,15 @@ double resident_mb() {
+     return static_cast<double>(resident) * static_cast<double>(sysconf(_SC_PAGESIZE)) / (1024.0 * 1024.0);
+ }
+ 
++void drain_audio() {   // clean shutdown: let queued sound play out (bounded), then close the device
++    if (!g_audio) return;
++    for (int i = 0; i < 300 && SDL_GetQueuedAudioSize(g_audio) > 0; ++i) SDL_Delay(1);
++    SDL_PauseAudioDevice(g_audio, 1);
++    SDL_ClearQueuedAudio(g_audio);
++    SDL_CloseAudioDevice(g_audio);
++    g_audio = 0;
++}
++
+ void show_speed() {
+     static std::uint64_t start = 0, frames = 0;
+     static double cpu_start = 0.0, gpu_start = 0.0;
+@@ -282,7 +326,7 @@ void show_speed() {
+     const double queued = g_audio ? SDL_GetQueuedAudioSize(g_audio) / static_cast<double>(kAudioBytesPerMs) : 0.0;
+     std::snprintf(title, sizeof title, "ps2-web-recomp  %.1f fps  CPU %.0f%%  GPU %.0f%%  RAM %.0f MB  audio %.0f ms", static_cast<double>(frames) / seconds,
+                   (cpu - cpu_start) / seconds * 100.0, (gpu - gpu_start) / (seconds * 10.0), resident_mb(), queued);
+-    SDL_SetWindowTitle(g_window, title);
++    if (g_quit_progress.load() == 0.0f) SDL_SetWindowTitle(g_window, title);   // keep the hold-to-quit title visible
+     // PS2_PERF_LOG=1 (window mode): one line per second on stderr; run.sh --debug saves it to logs/run-*.log.
+     static const bool perf_log = [] { const char *e = std::getenv("PS2_PERF_LOG"); return e && *e == '1'; }();
+     static std::uint64_t last_frames_starved = 0, last_events = 0;
+@@ -357,7 +401,9 @@ int run_window(const std::function<int()> &emulate) {
+     const bool threads = !std::getenv("PS2_ONE_THREAD") && !std::getenv("PS2_TIME") && ps2::g_options.frames_dir.empty();
+     if (!threads) {
+         ps2::g_options.on_vblank = on_vblank;
+-        return emulate();
++        const int r = emulate();
++        drain_audio();
++        return r;
+     }
+     ps2::g_options.on_vblank = [] {
+         ps2::post_present();
+@@ -381,6 +427,8 @@ int run_window(const std::function<int()> &emulate) {
+         if (ps2::render_pending(g_gpu_present, g_gpu_present ? none : copy, show_speed, 8.0) == ps2::Rendered::idle) ps2::wait_render_work(4);
+     }
+     emulation.join();
++    drain_audio();
++    std::fprintf(stderr, "[window] exit %d\n", result);
+     SDL_Quit();
+     std::fflush(nullptr);
+     std::_Exit(result);
+diff --git a/runtime/src/iop/sio2.cpp b/runtime/src/iop/sio2.cpp
+index 60adac5..5231615 100644
+--- a/runtime/src/iop/sio2.cpp
++++ b/runtime/src/iop/sio2.cpp
+@@ -319,9 +319,9 @@ void reset() {
+     load_card();
+ }
+ 
+-void flush_cards() {
++void flush_cards(bool force) {
+     Card &c = g_card;
+-    if (!c.dirty || ++c.quiet < 50) return;
++    if (!c.dirty || (!force && ++c.quiet < 50)) return;
+     c.dirty = false;
+     std::ofstream out(g_options.memcard_path, std::ios::binary | std::ios::trunc);
+     if (out) out.write(reinterpret_cast<const char *>(c.data.data()), static_cast<std::streamsize>(c.data.size()));
+@@ -330,6 +330,7 @@ void flush_cards() {
+         return;
+     }
+     out.close();
++    if (force) std::fprintf(stderr, "[mc] card saved on exit\n");
+     if (g_options.on_memcard_saved) g_options.on_memcard_saved();
+ }
+ 
+diff --git a/runtime/src/iop/sio2.hpp b/runtime/src/iop/sio2.hpp
+index 262e7a7..688fd73 100644
+--- a/runtime/src/iop/sio2.hpp
++++ b/runtime/src/iop/sio2.hpp
+@@ -18,6 +18,6 @@ void set_buttons(int pad, std::uint16_t pressed_mask);
+ void set_axis(int pad, int axis, std::uint8_t value);
+ void set_pressure(int pad, int button, std::uint8_t value);
+ std::uint16_t rumble(int pad);
+-void flush_cards();
++void flush_cards(bool force = false);   // force: write a dirty card now (clean shutdown)
+ 
+ }
+diff --git a/runtime/src/system.cpp b/runtime/src/system.cpp
+index ca8f06c..466c9d7 100644
+--- a/runtime/src/system.cpp
++++ b/runtime/src/system.cpp
+@@ -382,6 +382,7 @@ int run() {
+         if (c.budget <= 0) refill(c);
+         dispatch(c, 0, 0);
+     }
++    iop::sio2::flush_cards(true);   // a card written in the last frames is not on disk yet
+     kernel::dump();
+     iop::dump();
+     sif::dump();

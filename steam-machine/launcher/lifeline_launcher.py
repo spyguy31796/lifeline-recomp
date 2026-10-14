@@ -314,8 +314,9 @@ def run_ui():
             msg = "Coming soon" if key.startswith("qol:") else "Install first"; return
         if key in ("play", "new"):
             pygame.display.quit()
-            r = subprocess.call(play_cmd(c, new_game=(key == "new")), env=play_env(c))
-            return "quit" if r == 0 else "relaunch"
+            r = subprocess.call(play_cmd(c, new_game=(key == "new")), env=play_env(c))   # waits for the game
+            msg = "" if r == 0 else "Game exited with code %d (run.sh --debug logs to logs/run-*.log)" % r
+            return "relaunch"   # back to the menu either way (the in-game quit hotkey exits 0)
         if key == "bindings":
             import bindings
             bindings.screen(pygame, scr, (F, S, T), c, save); pygame.event.clear(); return
@@ -352,7 +353,7 @@ def run_ui():
             elif name == "down" and not job: sel = (sel + 1) % n
             else: r = act(name)
             if r == "quit": return 0
-            if r == "relaunch":   # game exited with an error: back to the menu, drop presses made in-game
+            if r == "relaunch":   # game exited: back to the menu, drop presses made in-game
                 pygame.display.init(); pygame.joystick.quit(); pygame.joystick.init(); pads.clear()
                 scr = pygame.display.set_mode((1280, 800), pygame.FULLSCREEN if full else pygame.RESIZABLE)
                 pygame.mouse.set_visible(False)

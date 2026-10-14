@@ -26,7 +26,7 @@ cfg = configparser.ConfigParser()
 check(B.to_env(cfg) == "" and B.current(cfg, "circle") == "b", "no section = defaults, no env")
 B.set_binding(cfg, "circle", "paddle1"); B.add_binding(cfg, "circle", "b"); B.add_binding(cfg, "circle", "b")
 check(cfg.get("bindings", "circle") == "paddle1, b", "add dedups")
-check(cfg.get("bindings", "cross") == "a" and len(cfg.options("bindings")) == 20, "full layout written on first edit")
+check(cfg.get("bindings", "cross") == "a" and len(cfg.options("bindings")) == 22, "full layout written on first edit")
 env = B.to_env(cfg); check(env.startswith("circle=paddle1, b;cross=a;") and "lx=leftx" in env, "env string")
 check(B.pretty("-lefty, righty~, paddle1") == "LS Y-, RS Y inverted, Paddle 1", "pretty")
 B.reset(cfg); check(not cfg.has_section("bindings"), "reset")
@@ -71,7 +71,7 @@ plan = [
     [btn(pg.CONTROLLER_BUTTON_DPAD_DOWN)], [btn(pg.CONTROLLER_BUTTON_A)], [btn(pg.CONTROLLER_BUTTON_A, False)], "wait",  # Triangle
     [axis(5, 30000)], [axis(5, 0)], "wait",                                          # RT
     [btn(pg.CONTROLLER_BUTTON_DPAD_DOWN)], [btn(pg.CONTROLLER_BUTTON_X)],            # clear D-pad up
-    [btn(pg.CONTROLLER_BUTTON_DPAD_UP)] * 8,   # wrap past "Reset" to Left stick Y
+    [btn(pg.CONTROLLER_BUTTON_DPAD_UP)] * 10,  # wrap past "Reset" and the hotkey rows to Left stick Y
     [btn(pg.CONTROLLER_BUTTON_A)], [btn(pg.CONTROLLER_BUTTON_A, False)], "wait",
     [axis(3, -30000)], [axis(3, 0)], "wait",                                         # push RS up -> righty inverted
     "shot", [btn(pg.CONTROLLER_BUTTON_B)],
@@ -93,4 +93,43 @@ check(g("triangle") == "righttrigger", "trigger bound (got %r)" % g("triangle"))
 check(g("up") == "none", "clear")
 check(g("ly") == "righty~", "stick bound inverted (got %r)" % g("ly"))
 check(saved, "saved on exit")
+
+# --- hotkeys: validation, pretty, env, chord capture ---
+for good in [("hk_quit", "back&start@1500"), ("hk_quit", "key:Escape@1000, key:Ctrl&key:Q"), ("hk_fullscreen", "back & rightstick"),
+             ("hk_fullscreen", "none"), ("hk_quit", "paddle1@0"), ("hk_quit", "-lefty&dpup@10000"), ("hk_quit", B.HOTKEY_DEFAULTS["hk_quit"])]:
+    check(B.validate(*good) == "", "valid %r: %s" % (good, B.validate(*good)))
+for bad in [("hk_quit", "back&zz"), ("hk_quit", "back@-1"), ("hk_quit", "back@10001"), ("hk_quit", "back@1.5"), ("hk_quit", "back&&start"),
+            ("hk_quit", "a&b&x&y&start"), ("hk_quit", "righty~"), ("hk_quit", "key:&"), ("hk_quit", "key:@"), ("hk_other", "a")]:
+    check(B.validate(*bad) != "", "invalid %r accepted" % (bad,))
+check(B.pretty("back&start@1500, key:Escape@1000") == "Back/View + Start/Menu (hold 1.5s), Escape (hold 1s)", "pretty chords: " + B.pretty("back&start@1500, key:Escape@1000"))
+check(B.pretty("key:Alt&key:Return") == "Alt + Return", "pretty key chord")
+cfg = configparser.ConfigParser()
+check(B.current(cfg, "hk_quit") == B.HOTKEY_DEFAULTS["hk_quit"], "hotkey default")
+B.set_binding(cfg, "hk_quit", "guide@2000"); env = B.to_env(cfg)
+check(env.endswith(";hk_fullscreen=%s;hk_quit=guide@2000" % B.HOTKEY_DEFAULTS["hk_fullscreen"]), "hotkeys in PS2_INPUT_MAP: " + env[-80:])
+c = B.ChordCapture(1500, now=0); c.tick(0.3)
+c.feed("back", True, 1.0); c.feed("start", True, 1.1)
+check(c.tick(3.0) is None and c.phase == "held", "chord held, no bind yet")
+check(c.feed("start", False, 3.1) == ("bind", "back&start@1500"), "first release binds the chord with hold")
+c = B.ChordCapture(0, now=0); c.tick(0.3); c.feed("key:f11", True, 1); check(c.feed("key:f11", False, 1.1) == ("bind", "key:f11"), "single key")
+c = B.ChordCapture(0, now=0); c.tick(0.3); c.feed("back", True, 1); check(c.tick(1 + c.CHORD_CANCEL) == ("cancel", "held to cancel"), "long hold cancels")
+c = B.ChordCapture(0, now=0); c.tick(0.3)
+for i, b in enumerate(["a", "b", "x", "y", "start"]): c.feed(b, True, 1 + i / 10)
+check(c.feed("a", False, 2) == ("bind", "a&b&x&y"), "chord capped at 4 inputs")
+
+# scripted screen: bind the quit and fullscreen hotkeys by holding chords
+cfg = configparser.ConfigParser(); saved = []
+def key(k, down=True): return pg.event.Event(pg.KEYDOWN if down else pg.KEYUP, key=k, mod=0, unicode="", scancode=0)
+plan[:] = [
+    [btn(pg.CONTROLLER_BUTTON_DPAD_UP)] * 2, [btn(pg.CONTROLLER_BUTTON_A)], [btn(pg.CONTROLLER_BUTTON_A, False)], "wait",   # Hotkey: quit
+    [btn(pg.CONTROLLER_BUTTON_BACK)], [btn(pg.CONTROLLER_BUTTON_START)], "wait",
+    [btn(pg.CONTROLLER_BUTTON_START, False)], [btn(pg.CONTROLLER_BUTTON_BACK, False)], "wait",
+    [btn(pg.CONTROLLER_BUTTON_DPAD_UP)], [btn(pg.CONTROLLER_BUTTON_A)], [btn(pg.CONTROLLER_BUTTON_A, False)], "wait",      # Hotkey: fullscreen
+    [key(pg.K_LALT)], [key(pg.K_RETURN)], [key(pg.K_RETURN, False)], [key(pg.K_LALT, False)], "wait",
+    "shot", [btn(pg.CONTROLLER_BUTTON_B)],
+]
+B.screen(pg, scr, (f, f, f), cfg, lambda c: saved.append(1), events=events)
+check(g("hk_quit") == "back&start@%d" % B.QUIT_HOLD_MS, "quit chord captured (got %r)" % g("hk_quit"))
+check(g("hk_fullscreen") == "key:left alt&key:return", "keyboard chord captured (got %r)" % g("hk_fullscreen"))
+check(B.validate("hk_fullscreen", g("hk_fullscreen")) == "" and saved, "captured chord validates and is saved")
 print("%d FAILED" % fails if fails else "all bindings tests passed"); sys.exit(1 if fails else 0)
