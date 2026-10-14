@@ -33,6 +33,7 @@ grep -q "\[slots\] slot 2 is empty" "$LOG" || { echo "FAIL: empty slot not refus
 [ "$(grep -c '\[state\] loaded' "$LOG")" = 1 ] || { echo "FAIL: expected exactly one load (tap must not load)"; fail=1; }
 grep -q "\[slots\] loaded slot 1" "$LOG" || { echo "FAIL: slot 1 not loaded"; fail=1; }
 [ -s "$HERE_RUN/saves/before-load.state" ] || { echo "FAIL: no before-load backup"; fail=1; }
+ls "$HERE_RUN"/saves/*.tmp >/dev/null 2>&1 && { echo "FAIL: .tmp left in saves/"; fail=1; }   # state, voice and backup are all renamed into place
 [ "${PS2_VOICE_OFF:-0}" = 1 ] || grep -q "\[voice\] .*state loaded" "$LOG" || { echo "FAIL: voice not reset after load"; fail=1; }
 [ "$rc" = 0 ] || { echo "FAIL: exit $rc"; fail=1; }
 grep -E "\[slots\]|\[state\]|\[voice\] .*state loaded|halted" "$LOG"
