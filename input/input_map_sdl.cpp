@@ -171,7 +171,21 @@ void request_slot(const SaveSlots &slots, SlotAction action, int slot) {
         r.path = final_path;
         r.before = [backup, slot] {   // re-checked on the emulation thread, then keep what's running in case the load is a mistake
             if (voice_busy()) { std::fprintf(stderr, "[slots] load slot %d skipped: voice busy\n", slot); return false; }
-            if (!ps2::save_state(backup)) std::fprintf(stderr, "[slots] warning: could not keep the current game in %s\n", backup.c_str());
+            // the backup is written beside it and renamed over it only when complete; if it can't be kept,
+            // refuse the load so a failed load never "restores" a stale backup from an earlier session
+            const std::string btmp = backup + ".tmp";
+            std::error_code e;
+            if (!ps2::save_state(btmp)) {
+                std::filesystem::remove(btmp, e);
+                std::fprintf(stderr, "[slots] load slot %d refused: could not keep the current game in %s\n", slot, backup.c_str());
+                return false;
+            }
+            std::filesystem::rename(btmp, backup, e);
+            if (e) {
+                std::filesystem::remove(btmp, e);
+                std::fprintf(stderr, "[slots] load slot %d refused: could not write %s\n", slot, backup.c_str());
+                return false;
+            }
             return true;
         };
         r.after = [backup, voice, slot](bool ok) {
@@ -197,7 +211,15 @@ void request_slot(const SaveSlots &slots, SlotAction action, int slot) {
                 std::filesystem::rename(tmp, final_path, e);
                 if (e) std::fprintf(stderr, "[slots] cannot write %s: %s\n", final_path.c_str(), e.message().c_str());
                 else {
-                    std::ofstream(voice) << (lifeline_voice_context ? lifeline_voice_context() : "") << "\n";
+                    const std::string vtmp = voice + ".tmp";   // voice context: same .tmp + rename as the state
+                    bool vok;
+                    { std::ofstream vf(vtmp, std::ios::trunc);
+                      vf << (lifeline_voice_context ? lifeline_voice_context() : "") << "\n"; vf.flush(); vok = bool(vf); }
+                    if (vok) std::filesystem::rename(vtmp, voice, e);
+                    if (!vok || e) {
+                        std::filesystem::remove(vtmp, e);
+                        std::fprintf(stderr, "[slots] warning: could not write %s\n", voice.c_str());
+                    }
                     std::fprintf(stderr, "[slots] saved slot %d\n", slot);
                 }
             } else std::filesystem::remove(tmp, e);

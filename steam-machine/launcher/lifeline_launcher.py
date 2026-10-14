@@ -41,7 +41,7 @@ BUILD = [("cpu_tuned", "CPU-tuned build (rebuild)",
 LAUNCH = [("skip_tutorial", "Skip tutorial (needs saves/room001.state)"),
           ("fullscreen", "Fullscreen"), ("debug", "Debug logs"), ("voice_off", "Voice off (PS2_VOICE_OFF)")]
 DEFAULTS = {"launch": {"skip_tutorial": "0", "fullscreen": "1", "debug": "1", "voice_off": "0"},
-            "qol": {k: ("1" if k == "resolution_scale" else "0") for k, *_ in QOL},
+            "qol": {k: ("1" if k == "resolution_scale" else "0") for k, *_ in QOL},   # save_slots stays off until turned on
             "build": {k: "0" for k, *_ in BUILD},
             "paths": {"iso": DEFAULT_ISO, "kit": os.path.dirname(HERE)}}
 
