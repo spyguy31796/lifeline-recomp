@@ -35,7 +35,7 @@ has_hotkeys "$N/ps2run" && ok "ps2run links the hotkey code" || bad "no hotkey c
 [ "$(grep -c " [0-9a-f]\{64\}$" "$S/.git/lifeline-patches")" = 5 ] && ok "marker lists 5 patches with sha256" || bad "marker"
 [ ! -e "$N/ps2run.prev" ] && ok "backup removed after success" || bad "ps2run.prev left behind"
 h1=$(git -C "$S" diff --cached | sha256sum)
-cp -p "$N/ps2run" "$N/ps2run.prev"   # as if the previous run had been killed mid-build
+( . "$REPO/steam-machine/ps2run_backup.sh"; backup_ps2run "$N" )   # as if the previous run had been killed mid-build
 if run "$REPO" 2; then ok "second run exit 0"; else bad "second run failed"; tail -20 "$T/build-2.log"; fi
 grep -q "restored ps2run from an interrupted build" "$T/build-2.log" && ok "leftover ps2run.prev restored first" || bad "no interrupted-build restore"
 grep -q "applied 0" "$T/build-2.log" && bad "second run applied a patch again" || ok "second run applied nothing"
@@ -48,6 +48,15 @@ before=$(sha256sum < "$N/ps2run")
 if run "$T/badkit" 3; then bad "broken kit built"; else ok "broken kit fails"; fi
 grep -q "previous ps2run was kept" "$T/build-3.log" && ok "failure message" || bad "no keep message"
 [ -x "$N/ps2run" ] && [ "$(sha256sum < "$N/ps2run")" = "$before" ] && ok "previous ps2run kept (same sha256)" || bad "ps2run lost or changed"
+
+# Voice's repro: a killed backup left a 1 MB truncated, executable .prev (stale sidecar); a failed build must not restore it
+good=$(sha256sum < "$N/ps2run")
+( . "$REPO/steam-machine/ps2run_backup.sh"; backup_ps2run "$N" )
+head -c 1048576 "$N/ps2run" > "$N/ps2run.prev"; chmod +x "$N/ps2run.prev"
+if run "$T/badkit" 4; then bad "broken kit built (4)"; else ok "broken kit fails (4)"; fi
+[ "$(sha256sum < "$N/ps2run")" = "$good" ] && ok "truncated exec .prev not restored over good ps2run" || bad "truncated .prev replaced ps2run"
+grep -q "restored ps2run from an interrupted build" "$T/build-4.log" && bad "truncated .prev reported as restored" || ok "no bogus restore message"
+[ -e "$N/ps2run.prev.bad" ] && [ ! -e "$N/ps2run.prev" ] && ok "truncated .prev moved to .prev.bad" || bad "prev.bad"
 git -C "$REPO" worktree remove --force "$T/oldkit" >/dev/null 2>&1 || true
 [ "$fail" = 0 ] && echo "build upgrade test passed" || echo "build upgrade test FAILED"
 exit "$fail"
