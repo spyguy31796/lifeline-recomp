@@ -32,7 +32,13 @@ if run "$REPO" 1; then ok "upgrade build exit 0"; else bad "upgrade build failed
 grep -q "patches already applied: .*0004-audio-buffer-and-perf-log.patch" "$T/build-1.log" && grep -q "applied 0005-hotkeys-and-clean-quit.patch" "$T/build-1.log" \
   && ok "detected 0001-0004, applied 0005" || bad "patch detection"
 has_hotkeys "$N/ps2run" && ok "ps2run links the hotkey code" || bad "no hotkey code in ps2run"
-[ "$(grep -c " [0-9a-f]\{64\}$" "$S/.git/lifeline-patches")" = 5 ] && ok "marker lists 5 patches with sha256" || bad "marker"
+# build.sh's PATCHES=( ) list, the marker and the patch files on disk must all agree, and never be empty
+NL=$(sed -n '/^PATCHES=(/,/)/p' "$REPO/steam-machine/build.sh" | sed 's/#.*//' | grep -o '[0-9]\{4\}-[A-Za-z0-9._-]*\.patch' | wc -l)
+NP=$(find "$REPO" -maxdepth 1 -name '0*.patch' | wc -l)   # every kit patch on disk
+NM=$(grep -c " [0-9a-f]\{64\}$" "$S/.git/lifeline-patches" || true)
+[ "$NL" -ge 6 ] && ok "build.sh PATCHES lists $NL patches (>= 6)" || bad "build.sh PATCHES lists only $NL patches"
+[ "$NL" = "$NM" ] && [ "$NM" = "$NP" ] && ok "marker lists $NM patches with sha256 = PATCHES list = $NP files" \
+  || bad "marker: PATCHES=$NL marker=$NM files=$NP"
 [ ! -e "$N/ps2run.prev" ] && ok "backup removed after success" || bad "ps2run.prev left behind"
 h1=$(git -C "$S" diff --cached | sha256sum)
 ( . "$REPO/steam-machine/ps2run_backup.sh"; backup_ps2run "$N" )   # as if the previous run had been killed mid-build

@@ -116,7 +116,7 @@ Keyboard works too (arrows, Enter, Esc).
 | 1 | On-screen voice readout | `voice_readout` | `PS2_VOICE_OVERLAY=1` | coming soon |
 | 2 | Voice tuning config | `voice_tuning` | `PS2_VOICE_CONFIG=~/lifeline-recomp/voice.ini` | coming soon |
 | 3 | Internal resolution 1x/2x/3x | `resolution_scale` | `PS2_SCALE=<n>` | **works** (AA coming soon) |
-| 4 | Save-anywhere slots | `save_slots` | `PS2_SAVE_SLOTS=1` | coming soon |
+| 4 | Save-anywhere slots | `save_slots` | `PS2_SAVE_SLOTS=1` | works (rebuild once) |
 | 5 | Always-on listening | `always_on` | `PS2_VOICE_ALWAYS_ON=1` | coming soon |
 | 6 | Large speech model | `large_model` | `PS2_VOICE_VOSK_MODEL=.../vosk-model-en-us-0.22` (if downloaded) | coming soon |
 | 7 | Native widescreen | `widescreen` | `PS2_WIDESCREEN=1` | coming soon |
@@ -188,6 +188,35 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
 |---|---|---|
 | Toggle fullscreen | F11, Alt+Enter | hold Select (Back/View), press R3 (right stick click) |
 | Quit to the launcher | hold Ctrl+Q 0.5 s, or hold Esc 1 s | hold Select + Start 1.5 s |
+| Save state to the current slot¹ | F5 | hold Select, press R1 (0.5 s) |
+| Load the current slot¹ | hold F8 0.5 s | hold Select + L1 1 s |
+| Next save slot (1-4)¹ | F6 | hold Select, press D-pad right |
+
+¹ Only with QoL item 4 **Save-anywhere slots** on (`save_slots = 1`, `PS2_SAVE_SLOTS=1`).
+
+#### Save-state slots
+- Four slots, saved as `saves/slot1.state` … `slot4.state` next to `run.sh` (`PS2_SAVE_DIR` overrides). The
+  selected slot starts at 1 each launch; F6 / Select+Right steps 1→2→3→4→1. The log shows `[slots] ...`.
+- The save or load happens at the next frame boundary on the emulation thread (where `--save-state` saves).
+  A save is written to `slotN.state.tmp` and renamed over the slot only when complete.
+- Before a load, the running game is kept in `saves/before-load.state`. Load it with
+  `run.sh --load-state saves/before-load.state` (or copy it over a slot) if you loaded by mistake. If a load fails
+  partway, the runner restores that file at once.
+- Voice-safe: save and load are refused (`[slots] not now: ...`) while Circle (push-to-talk) is held, while a
+  command is being recognized or a new voice context is loading, and for 1.5 s after a result is handed to the game.
+  The active voice context is stored in `slotN.voice` and restored on load, along with its vocabulary. A state
+  captured mid-listen has the game's recognizer (0x2DBE38) and the game's voice object's own listening flag (this+0x10) reset to idle, so the next Circle press posts cmd 1 (start) then cmd 2 (stop) and listens fresh — not a lone stop. No default
+  chord uses Circle. If `slotN.voice` can't be written after a save, the old one is removed so it is never paired
+  with the new state (that slot then loads with an unknown context until the game sets the next one).
+  The voice-object reset is armed only by a mid-listen load and expires after a few frames, on the next start/stop
+  command or the next load, and never clears while our recognizer is listening (`voice/listen_reset.hpp`, unit test in
+  `voice/tests/`). Tests: `steam-machine/tests/save-slots-smoke.sh` and `save-slots-midlisten-smoke.sh` (a slot captured mid-listen,
+  then one Circle press must post start then stop and be recognized); both need Xvfb + xdotool.
+- No on-screen confirmation yet (it is in the log, and the WebGPU presenter has no overlay).
+- Memory-card saves are untouched: a slot is a snapshot of the machine, and the card file is not rolled back.
+- Code: `input/save_slots.{hpp,cpp}` (decisions), `lifeline_hotkeys()` in `input/input_map_sdl.cpp`, the voice hooks at
+  the end of `voice/voice_overrides.cpp`, and `0007-save-state-slots.patch` (`ps2::request_state()` in
+  `runtime/src/system.cpp`). There are no runner `poll()` changes. Test: `input/tests/test_save_slots.cpp`.
 
 - Quit is a clean shutdown: the emulator halts, a memory card written in the last frames is saved
   (`[mc] card saved on exit`), queued sound plays out and the audio device is closed, then the runner exits 0, so
@@ -208,7 +237,7 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
     raw inputs instead (`hk_quit = joy:b6&joy:b7@1500`).
   - The launcher warns when a hotkey chord uses a push-to-talk (Circle) input: pressed first it talks, pressed
     later it is held back while the chord is down.
-- Rebind them in Launcher → Controller bindings → **Hotkey: fullscreen** / **Hotkey: quit (hold)**: hold every
+- Rebind them in Launcher → Controller bindings → **Hotkey: fullscreen** / **Hotkey: quit (hold)** (and the save-slot hotkeys): hold every
   button (or key) of the new chord together, then release; the first release binds them all (up to 4). A captured
   quit chord gets a 1.5 s hold. Holding a chord 4 s cancels. **Y** adds another chord, **X** disables the hotkey.
 - Stored in `config.ini [bindings]` as `hk_fullscreen` / `hk_quit` and passed in `PS2_INPUT_MAP` like the other
@@ -322,6 +351,7 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `0004-audio-buffer-and-perf-log.patch` | Patch for ps2-web-recomp: configurable audio pacing buffer, underrun counter, `[perf]` log line |
 | `0005-hotkeys-and-clean-quit.patch` | Patch for ps2-web-recomp: hotkey hook (fullscreen, hold-to-quit), card save and audio drain on exit |
 | `0006-vu-fast-interpreter-and-check.patch` | Patch for ps2-web-recomp: faster VU1 interpreter (`PS2_VU_FAST`), `PS2_VU_CHECK` shadow harness, `PS2_VU_SELFTEST` (only touches `runtime/src/vu_micro.cpp`) |
+| `0007-save-state-slots.patch` | Patch for ps2-web-recomp: `request_state()`, a save/load at the next frame boundary for the save-slot hotkeys |
 | `input/` | Controller remap layer and hotkeys (`PS2_INPUT_MAP` parser, chord/hold state, SDL apply) and their unit tests |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 | `steam-machine/cpu_flags.sh` | CPU-tuned build flags (`[build] cpu_tuned`) with generic fallback; test in `steam-machine/tests/` |

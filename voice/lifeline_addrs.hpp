@@ -11,6 +11,11 @@ constexpr std::uint32_t kState        = 0x2DBE38; // 1 listening, 2 idle, 3 resu
 constexpr std::uint32_t kThreshold    = 0x2DBE4C;
 constexpr std::uint32_t kConfidence   = 0x2DBE54;
 constexpr std::uint32_t kThreadActive = 0x2DBE58;
+// Game side: the game's voice object, Execute(this), polled every frame. this+0x10 is its own "listening" flag: set to 1
+// right after StartListening (0x143580/0x143590), cleared after StopListening (0x143534/0x143540). With it
+// set, the next Circle edge takes the stop path (cmd 2) instead of the start path (cmd 1).
+constexpr std::uint32_t kVoiceObjExecute      = 0x143368;
+constexpr std::uint32_t kVoiceObjListeningOff = 0x10;
 constexpr std::uint32_t kWordCount    = 0x34F43C;
 constexpr std::uint32_t kResultId     = 0x34F440;
 constexpr std::uint32_t kWordBuf      = 0x3F6600; // 10 x 64

@@ -29,8 +29,9 @@ struct Source {
     std::string key;    // Key: SDL scancode name, resolved at run time
 };
 
-enum Hotkey : int { kHkFullscreen, kHkQuit, kHotkeyCount };
-extern const char *const kHotkeyNames[kHotkeyCount];      // "hk_fullscreen", "hk_quit"
+// kHkSave / kHkLoad / kHkSlot: save-state slots (only active with PS2_SAVE_SLOTS=1, see save_slots.hpp).
+enum Hotkey : int { kHkFullscreen, kHkQuit, kHkSave, kHkLoad, kHkSlot, kHotkeyCount };
+extern const char *const kHotkeyNames[kHotkeyCount];      // "hk_fullscreen", "hk_quit", "hk_save", "hk_load", "hk_slot"
 extern const char *const kHotkeyDefaults[kHotkeyCount];
 constexpr int kMaxHoldMs = 10000, kMaxChordKeys = 4;
 

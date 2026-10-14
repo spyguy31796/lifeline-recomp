@@ -9,6 +9,7 @@
 //   PS2_VOICE_WAV_SCHEDULE / PS2_VOICE_WAV_DIR  file audio instead of the SDL microphone (see audio_source.hpp)
 //   PS2_VOICE_DEBUG=1, PS2_VOICE_LOG=<file>    per-recognition log (default ./voice.log)
 #include "lifeline_addrs.hpp"
+#include "listen_reset.hpp"
 #include "recognizer.hpp"
 #include "result_writer.hpp"
 #include "debug_log.hpp"
@@ -18,6 +19,7 @@
 #include "ps2/memory.hpp"
 #include "ps2/system.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -61,6 +63,14 @@ struct State {
     std::uint32_t pend_ctx = 0, pend_wrd = 0;
     std::uint64_t pend_since = 0;
 } g;
+
+// Read by the save-slot hotkeys on the host thread (lifeline_voice_busy below).
+std::atomic<bool> g_listening{false}, g_identifying{false};
+std::atomic<std::int64_t> g_result_ms{0};   // steady clock ms of the last result handed to the game
+ListenReset g_listen_reset;   // emulation thread only (Execute, PostMessage, after_load)
+std::int64_t steady_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 void vocab_for_context();
 void load_once() {
@@ -151,6 +161,7 @@ void try_identify() {
     std::fprintf(stderr, "[voice] f%llu context identified (posted f%llu): ctx=%s (%u B) wrd=%s (%u B, %u words)\n", (unsigned long long)now(),
                  (unsigned long long)g.pend_since, cn, ctx_len, wn, wrd_len, ps2::ld32(g.pend_wrd + 4));
     g.pend_ctx = g.pend_wrd = 0;
+    g_identifying = false;
     g.vgp.reset(); g.vgp_base = 0;
     vocab_for_context();
 }
@@ -170,11 +181,12 @@ bool deliver_recognition() {
     if (!g.rec->poll(r)) return false;
     const bool accept = !r.words.empty();
     // Speech that matched nothing (off-grammar or [unk]) is delivered as a VoCon-style rejection: no words,
-    // confidence 0, result id -1. GetStatus then reports 4 and CCanesVoice plays its normal "BAD!" feedback
+    // confidence 0, result id -1. GetStatus then reports 4 and the game's voice object plays its normal "BAD!" feedback
     // (verified in the tutorial). Only an empty decode (silence / accidental tap) leaves the engine idle.
     const bool heard = !r.raw.empty();
     if (accept) write_result(r.words, r.confidence, 0);
     else if (heard) write_result({}, 0, -1);
+    if (accept || heard) g_result_ms = steady_ms();
     std::string joined;
     for (const auto &w : r.words) joined += (joined.empty() ? "" : " | ") + w;
     char line[1024];
@@ -206,14 +218,16 @@ bool post_message(ps2::Cpu &c, std::uint32_t) {
     const std::uint32_t m = c.r[4].w[0];
     const std::uint32_t type = ps2::ld32(m), p1 = ps2::ld32(m + 4), p2 = ps2::ld32(m + 8), p3 = ps2::ld32(m + 12);
     if (type != 3) std::fprintf(stderr, "[voice] f%llu cmd %u p1 %08X p2 %08X p3 %08X ra %08X\n", (unsigned long long)now(), type, p1, p2, p3, c.r[31].w[0]);
+    if (type == 1 || type == 2) g_listen_reset.on_command();
     switch (type) {
-    case 1: ps2::st32(kState, 1); g.rec->start(); break;
+    case 1: ps2::st32(kState, 1); g.rec->start(); g_listening = true; break;
     case 2: // stop listening (push-to-talk released): deliver an injected result, else go idle
         if (ps2::ld32(kState) == 1 && !deliver_recognition() && !try_inject()) ps2::st32(kState, 2);
+        g_listening = false;
         break;
     case 8: ps2::st32(kThreshold, p1); break;
     case 5:
-        g.pend_ctx = phys(p1); g.pend_wrd = phys(p2); g.pend_since = now(); g.context = "?";
+        g.pend_ctx = phys(p1); g.pend_wrd = phys(p2); g.pend_since = now(); g.context = "?"; g_identifying = true;
         std::fprintf(stderr, "[voice] f%llu SetContext posted ctx@%08X wrd@%08X\n", (unsigned long long)now(), g.pend_ctx, g.pend_wrd);
         try_identify();
         break;
@@ -253,6 +267,7 @@ bool try_inject() {
         for (const auto &w : j.words)
             if (g.vgp && !g.vgp->find(w)) std::fprintf(stderr, "[voice] warning: '%s' is not in the current VGP\n", w.c_str());
         write_result(j.words, j.conf, 0);
+        g_result_ms = steady_ms();
         std::fprintf(stderr, "[voice] f%llu injected '%s'%s (%zu words, conf %u, context %s)\n", (unsigned long long)now(), j.words.empty() ? "" : j.words[0].c_str(),
                      j.words.size() > 1 ? "..." : "", j.words.size(), j.conf, g.context.c_str());
         return true;
@@ -272,6 +287,23 @@ bool get_status(ps2::Cpu &, std::uint32_t) {
     return false;
 }
 
+// Passive: after a slot load, put the game's voice object's own listening flag (this+0x10) back to idle.
+// Done here, with this call's `this`, never with an address seen before the load: a slot from another scene
+// can place the object elsewhere, and a stale pointer would write into unrelated memory.
+bool voice_object_execute(ps2::Cpu &c, std::uint32_t) {
+    if (!g_listen_reset.armed()) return false;
+    if (g_listen_reset.on_execute(now(), g_listening)) {
+        const std::uint32_t self = c.r[4].w[0];
+        const bool was = ps2::ld32(self + kVoiceObjListeningOff) == 1;
+        if (was) ps2::st32(self + kVoiceObjListeningOff, 0);
+        std::fprintf(stderr, "[voice] f%llu game voice object %s\n", (unsigned long long)now(),
+                     was ? "was listening, reset to idle" : "idle");
+    } else std::fprintf(stderr, "[voice] f%llu game voice object reset skipped (expired or listening)\n", (unsigned long long)now());
+    return false;
+}
+
+bool g_registered = false;
+
 struct Registrar {
     Registrar() {
         if (const char *off = std::getenv("PS2_VOICE_OFF"); off && *off == '1') return;
@@ -280,8 +312,53 @@ struct Registrar {
         ps2::register_override(kPostMessage, post_message);
         ps2::register_override(kMatcher, matcher);
         ps2::register_override(kGetStatus, get_status);
+        ps2::register_override(kVoiceObjExecute, voice_object_execute);
+        g_registered = true;
     }
 } g_registrar;
 
 }
+
+// --- Save-state slots (input/save_slots.hpp) -------------------------------------------------------------
+// Busy = a save or load now would cut a voice exchange in half: listening (push-to-talk down), a SetContext
+// not identified yet, or a result handed to the game in the last 1.5 s that it may not have read yet.
+constexpr std::int64_t kResultGraceMs = 1500;
+bool busy() {
+    if (!g_registered) return false;
+    return g_listening || g_identifying || steady_ms() - g_result_ms.load() < kResultGraceMs;
+}
+}  // namespace voice
+
+extern "C" bool lifeline_voice_busy() { return voice::busy(); }
+
+// Emulation thread, while a slot is saved: the active context, stored next to the state ("" if unknown).
+extern "C" const char *lifeline_voice_context() {
+    using namespace voice;
+    return g_registered && g.context.size() > 4 && g.context != "?" ? g.context.c_str() : "";
+}
+
+// Emulation thread, right after a slot was loaded: the game's memory is from the state, our side is not.
+// Drop the capture and pending context, restore the saved context's vocabulary, and if the state was taken
+// mid-listen put the recognizer (kState, 0x2DBE38) and the game's voice object's own listening flag (this+0x10, at its next Execute) back
+// to idle so the next push-to-talk starts fresh (cmd 1 on press, cmd 2 on release).
+extern "C" void lifeline_voice_after_load(const char *context) {
+    using namespace voice;
+    if (!g_registered) return;
+    load_once();
+    if (g_listening) { g.rec->stop(); Recognition drop; while (g.rec->poll(drop)) {} }
+    g_listening = g_identifying = false;
+    g_result_ms = 0;
+    g.pend_ctx = g.pend_wrd = 0;
+    g.vgp.reset(); g.vgp_base = 0;
+    g.vocab_from.clear();
+    g.context = context && *context ? context : "?";
+    if (g.context != "?") vocab_for_context();
+    const std::uint32_t st = ps2::ld32(kState);
+    if (st == 1) write_no_result();   // listening -> idle (2), no words
+    // The game's voice object can also say "listening" in a state taken mid-listen. Left that way, its next
+    // Circle press only posts a stop (cmd 2) with no start (cmd 1) and the word is lost. Its next Execute call
+    // (before it reads the pad) puts it back to idle; see voice_object_execute.
+    g_listen_reset.on_load(now(), st == 1);   // only a mid-listen state arms it
+    std::fprintf(stderr, "[voice] f%llu state loaded: context %s, recognizer %s\n", (unsigned long long)now(), g.context.c_str(),
+                 st == 1 ? "was listening, reset to idle" : "idle");
 }
