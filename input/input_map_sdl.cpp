@@ -105,12 +105,19 @@ constexpr BuiltinKey kBuiltinKeys[] = {
     {"S", kTriangle}, {"Q", kL1}, {"W", kR1}, {"1", kL2}, {"2", kR2}, {"Return", kStart}, {"Backspace", kSelect},
 };
 
+// The raw joystick input behind a named pad button, from the controller's SDL mapping.
+Source physical(SDL_GameController *pad, const Source &s) {
+    if (!pad || s.kind != Kind::Button) return s;
+    const SDL_GameControllerButtonBind b = SDL_GameControllerGetBindForButton(pad, static_cast<SDL_GameControllerButton>(s.index));
+    Source r;
+    if (b.bindType == SDL_CONTROLLER_BINDTYPE_BUTTON) { r.kind = Kind::JoyButton; r.index = b.value.button; return r; }
+    if (b.bindType == SDL_CONTROLLER_BINDTYPE_HAT) { r.kind = Kind::JoyHat; r.index = b.value.hat.hat; r.hat_mask = b.value.hat.hat_mask; return r; }
+    return s;
+}
+
 // PS2 buttons that this source drives, so a held chord can be kept from the game.
-std::uint16_t game_bits(const Map &m, const Source &s) {
-    std::uint16_t bits = 0;
-    for (int t = 0; t < kLX; ++t)
-        for (const Source &x : m.src[t])
-            if (same_source(x, s)) bits |= static_cast<std::uint16_t>(1u << t);
+std::uint16_t game_bits(SDL_GameController *pad, const Map &m, const Source &s) {
+    std::uint16_t bits = source_bits(m, s, [&](const Source &x) { return physical(pad, x); });
     if (s.kind == Kind::Key)
         for (const BuiltinKey &k : kBuiltinKeys)
             if (SDL_GetScancodeFromName(k.name) == SDL_GetScancodeFromName(s.key.c_str())) bits |= static_cast<std::uint16_t>(1u << k.target);
@@ -133,7 +140,7 @@ extern "C" int lifeline_hotkeys(SDL_GameController *pad, const Uint8 *keys, std:
     static HotkeyState state;
     const Map &m = hotkey_map();
     const unsigned fired = state.update(SDL_GetTicks(), m, [&](const Source &s) { return pressed(pad, keys, s, false) > 0; });
-    *buttons &= static_cast<std::uint16_t>(~state.mask(m, [&](const Source &s) { return game_bits(m, s); }));
+    *buttons &= static_cast<std::uint16_t>(~state.mask(m, [&](const Source &s) { return game_bits(pad, m, s); }));
     *quit_progress = state.quit_progress();
     if (fired & (1u << kHkFullscreen)) std::fprintf(stderr, "[hotkey] fullscreen\n");
     if (fired & (1u << kHkQuit)) std::fprintf(stderr, "[hotkey] quit\n");

@@ -40,41 +40,68 @@ for t in git cmake ninja clang++ python3 curl unzip; do command -v $t >/dev/null
 
 # --- Source at the pinned commit + our patches -------------------------------
 SRC="$WORK/ps2-web-recomp"
+# Our patches, oldest first. Applied ones are recorded in $MARK (inside .git, so not part of the tree).
+PATCHES=(0001-usbmic-hle-and-deci2-nohost.patch 0002-ee-overrides-and-voice-stage-a-b.patch 0003-input-remap-hook.patch
+         0004-audio-buffer-and-perf-log.patch 0005-hotkeys-and-clean-quit.patch)
+MARK="$SRC/.git/lifeline-patches"
 if [ ! -d "$SRC/.git" ]; then
   git clone "$UPSTREAM" "$SRC"
   git -C "$SRC" checkout --detach "$COMMIT"
-  git -C "$SRC" apply --index "$OURCODE/0001-usbmic-hle-and-deci2-nohost.patch"
-  git -C "$SRC" apply --index "$OURCODE/0002-ee-overrides-and-voice-stage-a-b.patch"
+  : > "$MARK"
 fi
-# 0003 (controller remap hook), 0004 (audio buffer + perf log) and 0005 (hotkeys + clean quit) also apply to existing checkouts, once each.
-for p in 0003-input-remap-hook.patch 0004-audio-buffer-and-perf-log.patch 0005-hotkeys-and-clean-quit.patch; do
-  if ! git -C "$SRC" apply --reverse --check "$OURCODE/$p" 2>/dev/null; then
-    git -C "$SRC" apply --index "$OURCODE/$p"
-  fi
+if [ ! -f "$MARK" ]; then
+  # Checkout from an older kit (no marker): later patches touch the same lines as earlier ones, so a
+  # reverse check only works on the newest applied patch. Find it; it and everything before it are applied.
+  newest=1   # 0001 + 0002 were always applied at clone time
+  for ((i=${#PATCHES[@]}-1; i>1; i--)); do
+    if git -C "$SRC" apply --reverse --check "$OURCODE/${PATCHES[$i]}" 2>/dev/null; then newest=$i; break; fi
+  done
+  printf '%s\n' "${PATCHES[@]:0:newest+1}" > "$MARK.tmp" && mv "$MARK.tmp" "$MARK"
+  echo "patches already applied: ${PATCHES[*]:0:newest+1}"
+fi
+for p in "${PATCHES[@]}"; do
+  grep -qxF "$p" "$MARK" && continue
+  git -C "$SRC" apply --index "$OURCODE/$p"
+  echo "$p" >> "$MARK"; echo "applied $p"
 done
 phase clone+patch
 [ "$(git -C "$SRC" rev-parse HEAD)" = "$COMMIT" ] || { echo "unexpected commit in $SRC" >&2; exit 1; }
 
 # --- port.sh (translate + native build) --------------------------------------
 NAME=lifeline
+V="$OURCODE/voice"
+# every .cpp in voice/ and input/ (Vosk is dlopen'ed at run time, so no build-time libvosk)
+VOICE_SRCS=$(printf '%s;' "$V"/*.cpp "$OURCODE"/input/*.cpp); VOICE_SRCS=${VOICE_SRCS%;}   # + controller remap layer
+GAME="$SRC/games/$NAME"; GEN="$SRC/generated/$NAME"; NAT="$SRC/build/native-$NAME"
+configure() {
+  cmake -S "$SRC" -B "$NAT" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
+      -DPS2_GENERATED="$GEN" -DPS2_EXTRA_SOURCES="$VOICE_SRCS" >/dev/null
+}
+# Keep a working game if any compile/link below fails: back up ps2run, put it back unless we finish.
+BUILD_OK=""
+[ -f "$NAT/ps2run" ] && cp -p "$NAT/ps2run" "$NAT/ps2run.prev"
+keep_old_ps2run() {
+  if [ -z "$BUILD_OK" ] && [ -f "$NAT/ps2run.prev" ]; then
+    mv -f "$NAT/ps2run.prev" "$NAT/ps2run"; echo "build failed: the previous ps2run was kept" >&2
+  fi
+}
+trap keep_old_ps2run EXIT
+# An existing build dir has the source list of the previous kit: refresh it before port.sh compiles,
+# so new files (e.g. input/*.cpp) are part of the first link.
+[ -f "$NAT/build.ninja" ] && configure
 # shellcheck disable=SC2086
 "$SRC/scripts/port.sh" "$NAME" "$ISO" --native-only ${PORT_ARGS:---no-explore}
 phase "port.sh (tools+translate+first compile)"
 
 # --- Re-translate with the voice overrides, relink with the voice module ------
-V="$OURCODE/voice"
-# every .cpp in voice/ and input/ (Vosk is dlopen'ed at run time, so no build-time libvosk)
-VOICE_SRCS=$(printf '%s;' "$V"/*.cpp "$OURCODE"/input/*.cpp); VOICE_SRCS=${VOICE_SRCS%;}   # + controller remap layer
-GAME="$SRC/games/$NAME"; GEN="$SRC/generated/$NAME"; NAT="$SRC/build/native-$NAME"
 ELF="$GAME/disc/$(sed -n 's/^BOOT2 *= *//p' "$GAME/disc/SYSTEM.CNF" | tr -d '\r' | sed 's/.*\\//; s/;.*//')"
 mods=(); [ -d "$GAME/modules" ] && mods=(--modules "$GAME/modules")
 "$SRC/build/tools/eerecomp" "$ELF" --entries "$GAME/entries.txt" "${mods[@]}" \
     --overrides "$V/overrides.txt" --out "$GEN" | tail -1
 phase "re-translate with overrides"
-cmake -S "$SRC" -B "$NAT" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
-    -DPS2_GENERATED="$GEN" \
-    -DPS2_EXTRA_SOURCES="$VOICE_SRCS" >/dev/null
+configure
 ninja -C "$NAT" ps2run > "$NAT/ninja.log" 2>&1 || { tail -30 "$NAT/ninja.log"; exit 1; }
+BUILD_OK=1; rm -f "$NAT/ps2run.prev"
 
 phase "relink with voice module"
 # --- Vosk 0.3.45 + model (fetched on the device, never bundled; loaded at run time) ---

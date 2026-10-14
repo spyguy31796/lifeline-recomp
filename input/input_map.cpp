@@ -57,6 +57,15 @@ bool same_source(const Source &a, const Source &b) {
     return a.kind == b.kind && a.index == b.index && a.sign == b.sign && a.hat_mask == b.hat_mask && lower(a.key) == lower(b.key);
 }
 
+std::uint16_t source_bits(const Map &m, const Source &s, const std::function<Source(const Source &)> &physical) {
+    const Source want = physical(s);
+    std::uint16_t bits = 0;
+    for (int t = 0; t < kLX; ++t)
+        for (const Source &x : m.src[t])
+            if (same_source(x, s) || same_source(physical(x), want)) bits |= static_cast<std::uint16_t>(1u << t);
+    return bits;
+}
+
 bool parse_chords(const std::string &spec, std::vector<Chord> &out, std::string &err) {
     out.clear();
     const std::string s = trim(spec);
