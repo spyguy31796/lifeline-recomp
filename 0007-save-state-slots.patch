@@ -1,0 +1,94 @@
+diff --git a/runtime/include/ps2/system.hpp b/runtime/include/ps2/system.hpp
+index 0eb5552..e9c59ae 100644
+--- a/runtime/include/ps2/system.hpp
++++ b/runtime/include/ps2/system.hpp
+@@ -75,6 +75,16 @@ void halt(const std::string &reason);
+ bool save_state(const std::string &path);
+ bool load_state(const std::string &path);
+ bool load_state(const std::uint8_t *data, std::size_t size);
++// Save or load a state while the game runs (any thread may call). It runs on the emulation thread right after
++// the next vblank, the same point --save-state uses: before() may veto it (returns false), after(ok) always runs
++// on the emulation thread afterwards. Returns false (and does nothing) while an earlier request is still pending.
++struct StateRequest {
++    bool load = false;
++    std::string path;
++    std::function<bool()> before;
++    std::function<void(bool ok)> after;
++};
++bool request_state(StateRequest request);
+ bool halted();
+ std::uint64_t frame_count();
+ 
+diff --git a/runtime/src/system.cpp b/runtime/src/system.cpp
+index 466c9d7..2dde89d 100644
+--- a/runtime/src/system.cpp
++++ b/runtime/src/system.cpp
+@@ -30,6 +30,8 @@
+ #include <fstream>
+ #include <cstdlib>
+ #include <iterator>
++#include <mutex>
++#include <optional>
+ #include <stdexcept>
+ 
+ namespace ps2 {
+@@ -55,6 +57,10 @@ std::string g_halt_reason;
+ std::uint64_t g_frames = 0;
+ std::uint64_t g_iop_synced = 0;
+ bool g_state_request = false;
++bool g_frame_save = false;                     // --save-state frame reached
++std::mutex g_user_state_mutex;                  // request_state(): hotkey thread -> emulation thread
++std::optional<StateRequest> g_user_state;
++std::atomic<bool> g_user_state_pending{false};
+ bool g_resumed = false;
+ 
+ std::uint64_t next_event_time() {
+@@ -137,7 +143,8 @@ void vblank() {
+     schedule(hw::kEventVblankEnd + 100, now() + hblank_cycles() * 22u, [] { iop::vblank(false); });
+     kernel::on_vblank_start();
+     if (g_options.max_frames && g_frames >= g_options.max_frames) halt("frame limit reached");
+-    if (g_options.save_state_frame && g_frames == g_options.save_state_frame) g_state_request = true;
++    if (g_options.save_state_frame && g_frames == g_options.save_state_frame) g_state_request = g_frame_save = true;
++    if (g_user_state_pending.load(std::memory_order_acquire)) g_state_request = true;   // frame boundary
+     schedule(hw::kEventVblank, now() + frame_cycles(), vblank);
+ }
+ 
+@@ -363,13 +370,37 @@ void boot(std::uint32_t entry, const std::vector<std::string> &args) {
+     schedule(hw::kEventVblank, frame_cycles(), vblank);
+ }
+ 
++bool request_state(StateRequest request) {
++    std::lock_guard<std::mutex> lock(g_user_state_mutex);
++    if (g_user_state) return false;
++    g_user_state = std::move(request);
++    g_user_state_pending.store(true, std::memory_order_release);
++    return true;
++}
++
++namespace {
++void run_user_state() {
++    std::optional<StateRequest> r;
++    {
++        std::lock_guard<std::mutex> lock(g_user_state_mutex);
++        r.swap(g_user_state);
++        g_user_state_pending.store(false, std::memory_order_release);
++    }
++    if (!r) return;
++    bool ok = !r->before || r->before();
++    if (ok) ok = r->load ? load_state(r->path) : save_state(r->path);
++    if (r->after) r->after(ok);
++}
++}
++
+ int run() {
+     Cpu &c = g_cpu;
+     if (!g_resumed) set_budget(c, kMaxSlice);
+     while (!g_halted) {
+         if (g_state_request) {
+             g_state_request = false;
+-            save_state(g_options.save_state_path);
++            if (g_frame_save) { g_frame_save = false; save_state(g_options.save_state_path); }
++            run_user_state();
+         }
+         c.pc &= ~kUnwind;
+         run_due_events();

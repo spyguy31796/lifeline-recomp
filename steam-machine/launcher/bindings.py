@@ -7,7 +7,7 @@ Config: [bindings] in config.ini, one line per PS2 input, e.g.
     select = none              #   joy:bN / joy:aN+ / joy:hN.up (raw), key:<SDL key name>
 Inline comments need a space before '#' (as above); both run.sh and the launcher strip them.
 Keys ',', ';', '=' and '#' can't be bound (they are separators in the file / PS2_INPUT_MAP).
-Hotkeys live in the same section: hk_fullscreen / hk_quit = chord[@hold_ms], chord...  where a chord is
+Hotkeys live in the same section: hk_fullscreen / hk_quit / hk_save / hk_load / hk_slot = chord[@hold_ms], chord...  where a chord is
 inputs joined by '&' that must all be held, e.g. hk_quit = back&start@1500, key:Escape@1000.
 run.sh turns the section into PS2_INPUT_MAP for ps2run (ourcode/input). No section = built-in layout.
 """
@@ -21,10 +21,15 @@ TARGETS = [
     ("start", "START"), ("select", "SELECT"),
     ("lx", "Left stick X"), ("ly", "Left stick Y"), ("rx", "Right stick X"), ("ry", "Right stick Y"),
 ]
-HOTKEYS = [("hk_fullscreen", "Hotkey: fullscreen"), ("hk_quit", "Hotkey: quit (hold)")]
+HOTKEYS = [("hk_fullscreen", "Hotkey: fullscreen"), ("hk_quit", "Hotkey: quit (hold)"),
+           ("hk_save", "Hotkey: save state"), ("hk_load", "Hotkey: load state (hold)"), ("hk_slot", "Hotkey: next save slot")]
 HOTKEY_DEFAULTS = {"hk_fullscreen": "key:F11, key:Alt&key:Return, back&rightstick",     # same as ourcode/input/input_map.cpp
-                   "hk_quit": "key:Ctrl&key:Q@500, key:Escape@1000, back&start@1500"}
+                   "hk_quit": "key:Ctrl&key:Q@500, key:Escape@1000, back&start@1500",
+                   "hk_save": "key:F5, back&rightshoulder@500",       # save slots (QoL item 4); never Circle
+                   "hk_load": "key:F8@500, back&leftshoulder@1000",
+                   "hk_slot": "key:F6, back&dpright"}
 QUIT_HOLD_MS = 1500   # hold time given to a captured quit chord
+HOLD_ON_CAPTURE = {"hk_quit": QUIT_HOLD_MS, "hk_save": 500, "hk_load": 1000}   # captured chords get these holds
 MAX_HOLD_MS, MAX_CHORD = 10000, 4
 ANALOG = {"lx", "ly", "rx", "ry"}
 DEFAULTS = {"cross": "a", "circle": "b", "square": "x", "triangle": "y", "l1": "leftshoulder", "r1": "rightshoulder",
@@ -307,7 +312,7 @@ def screen(pg, scr, fonts, cfg, save, events=None):
             elif key == "__reset":
                 if name == "a": reset(cfg); save(cfg); msg = "Default layout restored"
             elif name in ("a", "y"):
-                if key in HOTKEY_DEFAULTS: cap = ChordCapture(QUIT_HOLD_MS if key == "hk_quit" else 0)
+                if key in HOTKEY_DEFAULTS: cap = ChordCapture(HOLD_ON_CAPTURE.get(key, 0))
                 else: cap = Capture(); cap.analog = key in ANALOG
                 mode = "replace" if name == "a" else "add"
             elif name == "x": set_binding(cfg, key, "none"); save(cfg); msg = "Cleared"

@@ -3,10 +3,22 @@
 // runner behaves exactly as upstream when this file is not linked or the env var is unset.
 #include "hotkeys.hpp"
 #include "input_map.hpp"
+#include "save_slots.hpp"
+#include "ps2/system.hpp"   // request_state (patch 0007)
 #include <SDL.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <string>
+
+// Voice side (voice/voice_overrides.cpp); weak so the input layer still links on its own.
+extern "C" __attribute__((weak)) bool lifeline_voice_busy();
+extern "C" __attribute__((weak)) const char *lifeline_voice_context();
+extern "C" __attribute__((weak)) void lifeline_voice_after_load(const char *context);
 
 using namespace lifeline_input;
 
@@ -131,19 +143,93 @@ const Map &hotkey_map() {
         Map x; std::string err; parse_map(spec, x, err);   // errors are reported by map()
         return x;
     }();
-    return m;
+    static const Map gated = [] {   // save-slot chords do nothing (and hold nothing back) unless PS2_SAVE_SLOTS=1
+        Map g = m;
+        if (!save_slots_enabled(std::getenv("PS2_SAVE_SLOTS"))) for (int h : {kHkSave, kHkLoad, kHkSlot}) g.hk[h].clear();
+        return g;
+    }();
+    return gated;
+}
+
+// --- Save-state slots: decided here on the host thread, done by the runner at the next vblank ---
+std::atomic<bool> g_slot_busy{false};   // a request is queued or running
+
+bool voice_busy() { return lifeline_voice_busy && lifeline_voice_busy(); }
+
+std::string read_file(const std::string &p) {
+    std::ifstream f(p); std::string s; std::getline(f, s); return s;
+}
+
+void request_slot(const SaveSlots &slots, SlotAction action, int slot) {
+    ps2::StateRequest r;
+    r.load = action == SlotAction::Load;
+    const std::string final_path = slots.state_path(slot), tmp = final_path + ".tmp", voice = slots.voice_path(slot);
+    const std::string backup = slots.backup_path(), dir = slots.dir();
+    if (r.load) {
+        std::error_code ec;
+        if (!std::filesystem::exists(final_path, ec)) { std::fprintf(stderr, "[slots] slot %d is empty\n", slot); return; }
+        r.path = final_path;
+        r.before = [backup, slot] {   // re-checked on the emulation thread, then keep what's running in case the load is a mistake
+            if (voice_busy()) { std::fprintf(stderr, "[slots] load slot %d skipped: voice busy\n", slot); return false; }
+            if (!ps2::save_state(backup)) std::fprintf(stderr, "[slots] warning: could not keep the current game in %s\n", backup.c_str());
+            return true;
+        };
+        r.after = [backup, voice, slot](bool ok) {
+            if (!ok) {   // a failed load can leave the machine half restored: go back to what was running
+                std::fprintf(stderr, "[slots] load slot %d failed; restoring the game from before\n", slot);
+                if (!ps2::load_state(backup)) ps2::halt("save slot load failed and the previous game could not be restored");
+            }
+            if (lifeline_voice_after_load) lifeline_voice_after_load(ok ? read_file(voice).c_str() : "");
+            if (ok) std::fprintf(stderr, "[slots] loaded slot %d\n", slot);
+            g_slot_busy = false;
+        };
+    } else {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        r.path = tmp;   // written beside the slot, renamed over it only when complete
+        r.before = [slot] {
+            if (voice_busy()) { std::fprintf(stderr, "[slots] save slot %d skipped: voice busy\n", slot); return false; }
+            return true;
+        };
+        r.after = [tmp, final_path, voice, slot](bool ok) {
+            std::error_code e;
+            if (ok) {
+                std::filesystem::rename(tmp, final_path, e);
+                if (e) std::fprintf(stderr, "[slots] cannot write %s: %s\n", final_path.c_str(), e.message().c_str());
+                else {
+                    std::ofstream(voice) << (lifeline_voice_context ? lifeline_voice_context() : "") << "\n";
+                    std::fprintf(stderr, "[slots] saved slot %d\n", slot);
+                }
+            } else std::filesystem::remove(tmp, e);
+            g_slot_busy = false;
+        };
+    }
+    g_slot_busy = true;
+    if (!ps2::request_state(std::move(r))) { g_slot_busy = false; std::fprintf(stderr, "[slots] busy, try again\n"); }
 }
 }  // namespace
 
-// Called every frame after the pad/keys are read. Returns 1 << kHkFullscreen / 1 << kHkQuit when fired.
+// Called every frame after the pad/keys are read. Returns 1 << kHkFullscreen / 1 << kHkQuit when fired;
+// save-slot hotkeys (PS2_SAVE_SLOTS=1) are handled here and queued to the runner (no runner poll() changes).
 extern "C" int lifeline_hotkeys(SDL_GameController *pad, const Uint8 *keys, std::uint16_t *buttons, float *quit_progress) {
     static HotkeyState state;
     const Map &m = hotkey_map();
     const unsigned fired = state.update(SDL_GetTicks(), m, [&](const Source &s) { return pressed(pad, keys, s, false) > 0; });
+    const bool talk_held = *buttons & (1u << kCircle);   // before chord masking: the game sees push-to-talk
     *buttons &= static_cast<std::uint16_t>(~state.mask(m, [&](const Source &s) { return game_bits(pad, m, s); }));
     *quit_progress = state.quit_progress();
     if (fired & (1u << kHkFullscreen)) std::fprintf(stderr, "[hotkey] fullscreen\n");
     if (fired & (1u << kHkQuit)) std::fprintf(stderr, "[hotkey] quit\n");
     static_assert((1u << kHkFullscreen) == 1 && (1u << kHkQuit) == 2, "bits match host/window.cpp kHotkey*");
-    return static_cast<int>(fired);
+    if (fired & ((1u << kHkSave) | (1u << kHkLoad) | (1u << kHkSlot))) {
+        static SaveSlots slots(save_dir(std::getenv("PS2_SAVE_DIR")));
+        const SlotDecision d = slots.on_hotkeys(fired, talk_held, voice_busy(), g_slot_busy.load());
+        switch (d.action) {
+        case SlotAction::NextSlot: std::fprintf(stderr, "[slots] slot %d selected\n", d.slot); break;
+        case SlotAction::Blocked: std::fprintf(stderr, "[slots] not now: %s\n", d.why); break;
+        case SlotAction::Save: case SlotAction::Load: request_slot(slots, d.action, d.slot); break;
+        case SlotAction::None: break;
+        }
+    }
+    return static_cast<int>(fired & ((1u << kHkFullscreen) | (1u << kHkQuit)));   // the runner only knows these two
 }

@@ -43,7 +43,8 @@ for t in git cmake ninja clang++ python3 curl unzip; do command -v $t >/dev/null
 SRC="$WORK/ps2-web-recomp"
 # Our patches, oldest first; see patches.sh for how applied ones are tracked.
 PATCHES=(0001-usbmic-hle-and-deci2-nohost.patch 0002-ee-overrides-and-voice-stage-a-b.patch 0003-input-remap-hook.patch
-         0004-audio-buffer-and-perf-log.patch 0005-hotkeys-and-clean-quit.patch 0006-vu-fast-interpreter-and-check.patch)
+         0004-audio-buffer-and-perf-log.patch 0005-hotkeys-and-clean-quit.patch 0006-vu-fast-interpreter-and-check.patch
+         0007-save-state-slots.patch)
 if [ ! -d "$SRC/.git" ]; then
   git clone "$UPSTREAM" "$SRC"
   git -C "$SRC" checkout --detach "$COMMIT"

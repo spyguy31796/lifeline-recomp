@@ -28,7 +28,7 @@ QOL = [
     ("voice_readout",    "1 On-screen voice readout",   "bool", False, "Shows what was heard + match/reject (PS2_VOICE_OVERLAY)"),
     ("voice_tuning",     "2 Voice tuning config",       "bool", False, "Reads voice.ini at launch (PS2_VOICE_CONFIG)"),
     ("resolution_scale", "3 Internal resolution",       ("choice", ["1", "2", "3"]), True, "PS2_SCALE: 1 = native, 2-3 = sharper (AA coming soon)"),
-    ("save_slots",       "4 Save-anywhere slots",       "bool", False, "Save-state slots on a hotkey/menu"),
+    ("save_slots",       "4 Save-anywhere slots",       "bool", True,  "4 save-state slots: F5 / Select+R1 save, F8 / hold Select+L1 load, F6 / Select+Right slot"),
     ("always_on",        "5 Always-on listening",       "bool", False, "Voice activity presses talk for you (PS2_VOICE_ALWAYS_ON)"),
     ("large_model",      "6 Large speech model",        "bool", False, "Uses %s if downloaded (better names, slower)" % LARGE_MODEL),
     ("widescreen",       "7 Native widescreen",         "bool", False, "True 16:9 with correct field of view"),

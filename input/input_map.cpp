@@ -41,10 +41,13 @@ template <std::size_t N> int find(const char *(&t)[N], const std::string &n) {
 }
 }  // namespace
 
-const char *const kHotkeyNames[kHotkeyCount] = {"hk_fullscreen", "hk_quit"};
+const char *const kHotkeyNames[kHotkeyCount] = {"hk_fullscreen", "hk_quit", "hk_save", "hk_load", "hk_slot"};
 const char *const kHotkeyDefaults[kHotkeyCount] = {
     "key:F11, key:Alt&key:Return, back&rightstick",
     "key:Ctrl&key:Q@500, key:Escape@1000, back&start@1500",
+    "key:F5, back&rightshoulder@500",    // save to the current slot (never Circle: it is push-to-talk)
+    "key:F8@500, back&leftshoulder@1000", // load the current slot (held, so a stray press doesn't lose progress)
+    "key:F6, back&dpright",               // next slot (1..4)
 };
 
 bool hotkey_from_name(const std::string &n, int &out) {
