@@ -1,5 +1,5 @@
 """[qol] vu_fast: default off, available toggle saved to config.ini, run.sh passes PS2_VU_FAST=1 only when on,
-an exported PS2_VU_FAST wins over config.ini, PS2_VU_CHECK passes through. Run: python3 test_vu_fast.py"""
+an exported PS2_VU_FAST (including empty) wins over config.ini, PS2_VU_CHECK passes through. Run: python3 test_vu_fast.py"""
 import importlib, os, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__)); LAUNCHER = os.path.dirname(HERE); KIT = os.path.dirname(LAUNCHER)
 fails = 0
@@ -28,6 +28,9 @@ def envs(vu_fast, extra=None):
 check("PS2_VU_FAST=1" in envs("1"), "on -> PS2_VU_FAST=1")
 check(not any(l.startswith("PS2_VU_FAST") for l in envs("0")), "off -> no PS2_VU_FAST (interpreter)")
 check("PS2_VU_FAST=0" in envs("1", {"PS2_VU_FAST": "0"}), "exported PS2_VU_FAST=0 beats config.ini")
+# Voice: set-but-empty must force off even when config has vu_fast=1 (:= would treat empty as unset)
+check("PS2_VU_FAST=" in envs("1", {"PS2_VU_FAST": ""}), "exported empty PS2_VU_FAST stays off despite vu_fast=1")
+check(not any(l == "PS2_VU_FAST=1" for l in envs("1", {"PS2_VU_FAST": ""})), "empty env never becomes 1")
 check("PS2_VU_CHECK=1" in envs("0", {"PS2_VU_CHECK": "1"}), "PS2_VU_CHECK passes through")
 shutil.rmtree(root)
 print("test_vu_fast: %s" % ("OK" if not fails else "%d FAILED" % fails)); sys.exit(1 if fails else 0)
