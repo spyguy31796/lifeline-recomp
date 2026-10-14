@@ -227,7 +227,12 @@ void request_slot(const SaveSlots &slots, SlotAction action, int slot) {
                     if (vok) std::filesystem::rename(vtmp, voice, e);
                     if (!vok || e) {
                         std::filesystem::remove(vtmp, e);
-                        std::fprintf(stderr, "[slots] warning: could not write %s\n", voice.c_str());
+                        // never leave an older slotN.voice paired with this new state: without one the load
+                        // starts with an unknown context (the game's next SetContext fills it in)
+                        std::error_code re;
+                        std::filesystem::remove(voice, re);
+                        std::fprintf(stderr, "[slots] warning: could not write %s%s; slot %d has no voice context\n", voice.c_str(),
+                                     re ? " (and the old one could not be removed)" : "", slot);
                     }
                     std::fprintf(stderr, "[slots] saved slot %d\n", slot);
                 }

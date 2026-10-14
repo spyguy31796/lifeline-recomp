@@ -205,8 +205,11 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
 - Voice-safe: save and load are refused (`[slots] not now: ...`) while Circle (push-to-talk) is held, while a
   command is being recognized or a new voice context is loading, and for 1.5 s after a result is handed to the game.
   The active voice context is stored in `slotN.voice` and restored on load, along with its vocabulary. A state
-  captured mid-listen has the game's recognizer reset to idle, so the next Circle press listens fresh. No default
-  chord uses Circle.
+  captured mid-listen has the game's recognizer (0x2DBE38) and CCanesVoice's own listening flag (this+0x10) reset to idle, so the next Circle press posts cmd 1 (start) then cmd 2 (stop) and listens fresh — not a lone stop. No default
+  chord uses Circle. If `slotN.voice` can't be written after a save, the old one is removed so it is never paired
+  with the new state (that slot then loads with an unknown context until the game sets the next one).
+  Tests: `steam-machine/tests/save-slots-smoke.sh` and `save-slots-midlisten-smoke.sh` (a slot captured mid-listen,
+  then one Circle press must post start then stop and be recognized); both need Xvfb + xdotool.
 - No on-screen confirmation yet (it is in the log, and the WebGPU presenter has no overlay).
 - Memory-card saves are untouched: a slot is a snapshot of the machine, and the card file is not rolled back.
 - Code: `input/save_slots.{hpp,cpp}` (decisions), `lifeline_hotkeys()` in `input/input_map_sdl.cpp`, the voice hooks at
