@@ -1,9 +1,9 @@
 diff --git a/host/audio_pacing.hpp b/host/audio_pacing.hpp
 new file mode 100644
-index 0000000..5f77737
+index 0000000..31b24ab
 --- /dev/null
 +++ b/host/audio_pacing.hpp
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,69 @@
 +// Lifeline Recomp 0004: audio pacing helpers (header-only so they can be unit-tested).
 +#pragma once
 +
@@ -57,6 +57,15 @@ index 0000000..5f77737
 +    }
 +};
 +
++// A target shorter than two device buffers can never keep a full buffer queued after the device
++// pulls one, so every frame would look starved. Raise it to 2x the buffer (rounded up to whole ms).
++inline std::uint32_t effective_target_ms(std::uint32_t target_ms, std::uint32_t device_buffer_bytes, std::uint32_t bytes_per_ms) {
++    const std::uint32_t min_ms = (2u * device_buffer_bytes + bytes_per_ms - 1) / bytes_per_ms;
++    if (target_ms >= min_ms) return target_ms;
++    std::fprintf(stderr, "[audio] pacing target %u ms is below 2x the device buffer; using %u ms\n", target_ms, min_ms);
++    return min_ms;
++}
++
 +// Drop incoming sound when the queue already holds the pacing target plus two device buffers,
 +// so latency can't build up far beyond the target (e.g. 400 ms + ~43 ms, not ~820 ms).
 +inline std::uint32_t cap_bytes(std::uint32_t target_ms, std::uint32_t device_buffer_bytes, std::uint32_t bytes_per_ms) {
@@ -65,7 +74,7 @@ index 0000000..5f77737
 +
 +}  // namespace audio_pacing
 diff --git a/host/window.cpp b/host/window.cpp
-index 6b429c5..9eea9f4 100644
+index 6b429c5..98bae30 100644
 --- a/host/window.cpp
 +++ b/host/window.cpp
 @@ -1,6 +1,7 @@
@@ -76,18 +85,16 @@ index 6b429c5..9eea9f4 100644
  
  #include <SDL.h>
  #include <SDL_syswm.h>
-@@ -220,10 +221,24 @@ void present() {
+@@ -220,10 +221,22 @@ void present() {
  
  constexpr Uint32 kAudioBytesPerMs = 48 * 4;
  
 +// Audio tuning (Lifeline Recomp 0004). PS2_AUDIO_BUFFER_MS: sound the pacer keeps queued (default 120,
 +// was a fixed 80; 20-400). PS2_AUDIO_SAMPLES: SDL device buffer in frames (default 1024; power of two
 +// 256-8192). Bad values fall back to the default with a warning (see audio_pacing.hpp).
-+Uint32 audio_target_ms() {
-+    static const Uint32 ms = static_cast<Uint32>(audio_pacing::env_int("PS2_AUDIO_BUFFER_MS", std::getenv("PS2_AUDIO_BUFFER_MS"), 120, 20, 400));
-+    return ms;
-+}
 +Uint32 g_device_buffer_bytes = 1024 * 4;
++Uint32 g_target_ms = 120;   // set in open_window(), raised to >= 2 device buffers there
++Uint32 audio_target_ms() { return g_target_ms; }
 +std::atomic<std::uint64_t> g_starved_frames{0}, g_starve_events{0};
 +audio_pacing::Stats g_audio_stats;   // emulation thread only (pace)
 +
@@ -103,7 +110,7 @@ index 6b429c5..9eea9f4 100644
          return;
      }
      const std::uint64_t frequency = SDL_GetPerformanceFrequency();
-@@ -270,6 +285,18 @@ void show_speed() {
+@@ -270,6 +283,18 @@ void show_speed() {
      std::snprintf(title, sizeof title, "ps2-web-recomp  %.1f fps  CPU %.0f%%  GPU %.0f%%  RAM %.0f MB  audio %.0f ms", static_cast<double>(frames) / seconds,
                    (cpu - cpu_start) / seconds * 100.0, (gpu - gpu_start) / (seconds * 10.0), resident_mb(), queued);
      SDL_SetWindowTitle(g_window, title);
@@ -122,7 +129,7 @@ index 6b429c5..9eea9f4 100644
      start = now;
      frames = 0;
      cpu_start = cpu;
-@@ -284,7 +311,7 @@ void on_vblank() {
+@@ -284,7 +309,7 @@ void on_vblank() {
  }
  
  void queue_audio(const std::int16_t *samples, std::size_t frames) {
@@ -131,7 +138,7 @@ index 6b429c5..9eea9f4 100644
      SDL_QueueAudio(g_audio, samples, static_cast<Uint32>(frames * 4));
  }
  
-@@ -306,10 +333,13 @@ bool open_window(bool fullscreen) {
+@@ -306,10 +331,16 @@ bool open_window(bool fullscreen) {
      want.freq = 48000;
      want.format = AUDIO_S16SYS;
      want.channels = 2;
@@ -140,6 +147,9 @@ index 6b429c5..9eea9f4 100644
      g_audio = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
      if (g_audio) {
 +        g_device_buffer_bytes = static_cast<Uint32>(have.samples) * 4u;
++        g_target_ms = audio_pacing::effective_target_ms(
++            static_cast<Uint32>(audio_pacing::env_int("PS2_AUDIO_BUFFER_MS", std::getenv("PS2_AUDIO_BUFFER_MS"), 120, 20, 400)),
++            g_device_buffer_bytes, kAudioBytesPerMs);
          SDL_PauseAudioDevice(g_audio, 0);
 +        std::fprintf(stderr, "[audio] %d Hz, device buffer %u frames, pacing target %u ms, cap %u ms\n", have.freq, have.samples, audio_target_ms(),
 +                     audio_pacing::cap_bytes(audio_target_ms(), g_device_buffer_bytes, kAudioBytesPerMs) / kAudioBytesPerMs);

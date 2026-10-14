@@ -32,6 +32,17 @@ int main() {
     CHECK(cap_bytes(400, buf, per_ms) / per_ms == 442);             // 400 ms + 2 x 21.3 ms
     CHECK(cap_bytes(120, buf, per_ms) / per_ms == 162);
     CHECK(cap_bytes(400, 8192 * 4, per_ms) / per_ms < 820);         // even with the largest buffer
+    // target below 2x device buffer is raised (no false starvation with short targets)
+    CHECK(effective_target_ms(20, buf, per_ms) == 43);              // 2 x 21.33 ms, rounded up
+    CHECK(effective_target_ms(43, buf, per_ms) == 43);
+    CHECK(effective_target_ms(120, buf, per_ms) == 120);
+    CHECK(effective_target_ms(120, 8192 * 4, per_ms) == 342);      // 2 x 170.67 ms
+    CHECK(effective_target_ms(400, 8192 * 4, per_ms) == 400);
+    {   // at the raised target a full queue minus one device pull is not starved
+        Stats t; const std::uint32_t tgt = effective_target_ms(20, buf, per_ms);
+        for (int i = 0; i < 30; ++i) t.frame(tgt * per_ms - buf, buf);
+        CHECK(t.starved_frames == 0);
+    }
     std::printf(fails ? "%d FAILED\n" : "all audio_pacing tests passed\n", fails);
     return fails != 0;
 }

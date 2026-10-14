@@ -172,7 +172,8 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
     `dropouts`: separate starvation episodes.
   - If fps stays below 60 the queue can't stay full and audio will crackle whatever the buffer size: the game is
     paced by the audio clock, so the log tells you whether a slowdown is sustained or a short spike.
-- `PS2_AUDIO_BUFFER_MS` (default **120**, was a fixed 80; integer 20-400, clamped): how much sound is kept queued.
+- `PS2_AUDIO_BUFFER_MS` (default **120**, was a fixed 80; integer 20-400, clamped; raised to at least 2x the device
+  buffer with a warning, e.g. 43 ms at 1024): how much sound is kept queued.
   Bigger rides out short stalls (e.g. a voice command being decoded) at the cost of that much extra latency.
   Incoming sound is dropped above target + two device buffers, so latency can't build past that.
 - `PS2_AUDIO_SAMPLES` (default 1024; power of two 256-8192): SDL device buffer size.
