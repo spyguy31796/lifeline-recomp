@@ -1,0 +1,471 @@
+diff --git a/runtime/src/vu_micro.cpp b/runtime/src/vu_micro.cpp
+index bb82081..e57f663 100644
+--- a/runtime/src/vu_micro.cpp
++++ b/runtime/src/vu_micro.cpp
+@@ -410,6 +410,8 @@ float u2f(std::uint32_t v) {
+     return f;
+ }
+ 
++std::vector<std::vector<std::uint8_t>> *g_kick_sink = nullptr;   // Lifeline: PS2_VU_CHECK captures GS kicks here
++
+ void xgkick(Unit &u, std::uint32_t address) {
+     std::uint8_t buffer[16 * 1024 + 16];
+     std::uint32_t q = address & (u.data_qwords - 1), count = 0;
+@@ -430,6 +432,7 @@ void xgkick(Unit &u, std::uint32_t address) {
+             std::memcpy(buffer + count * 16, qword(u, q), 16);
+         done = eop;
+     }
++    if (g_kick_sink) { g_kick_sink->emplace_back(buffer, buffer + count * 16); return; }
+     gif::transfer(1, buffer, count);
+ }
+ 
+@@ -636,6 +639,8 @@ void set_tops(std::uint32_t top, std::uint32_t itop) {
+ }
+ 
+ void run_fast(int n, std::uint32_t address);
++void run_faster(int n, std::uint32_t address);
++void check_call(std::uint32_t pc, ProgramFn compiled);
+ 
+ std::unordered_map<std::uint64_t, ProgramFn> g_programs;
+ std::uint32_t g_generation[2] = {1, 1};
+@@ -785,6 +790,14 @@ void interpret(int unit, std::uint32_t pc) {
+     g_chaining = false;
+ }
+ 
++bool env_on(const char *name) { const char *v = std::getenv(name); return v && *v && std::strcmp(v, "0") != 0; }
++bool vu_fast() { static const bool on = env_on("PS2_VU_FAST"); return on; }    // Lifeline: [qol] vu_fast
++void report_check();
++bool vu_check() {
++    static const bool on = [] { const bool v = env_on("PS2_VU_CHECK"); if (v) std::atexit(report_check); return v; }();
++    return on;
++}  // Lifeline: shadow-check harness
++
+ void run_entry(int unit, std::uint32_t pc) {
+     static const bool interpret_only = std::getenv("PS2_VU_INTERPRET") != nullptr;
+     static const bool count = std::getenv("PS2_VU_COUNT") != nullptr;
+@@ -795,7 +808,8 @@ void run_entry(int unit, std::uint32_t pc) {
+             ++compiled;
+             const ProgramFn jit = g_entries[(pc & 16383u) >> 3].jit;
+             static std::uint64_t sampled = 0;
+-            if (jit && jit != fn && ++sampled % 32 == 0) check_jit(fn, jit);
++            if (vu_check()) check_call(pc, fn);
++            else if (jit && jit != fn && ++sampled % 32 == 0) check_jit(fn, jit);
+             else fn(g_vu1, g_vu1_mem);
+             return;
+         }
+@@ -809,6 +823,11 @@ void run_entry(int unit, std::uint32_t pc) {
+             std::fprintf(stderr, "\n");
+         }
+     }
++    if (unit == 1 && vu_fast()) {
++        if (vu_check()) check_call(pc, nullptr);
++        else run_faster(unit, pc);
++        return;
++    }
+     run_fast(unit, pc);
+ }
+ 
+@@ -918,6 +937,385 @@ void run_fast(int n, std::uint32_t address) {
+     std::fprintf(stderr, "[vu%d] program at 0x%04X did not end\n", n, address);
+ }
+ 
++// ---- Lifeline: faster VU interpreter (PS2_VU_FAST=1) and shadow check harness (PS2_VU_CHECK=1) ----
++// run_faster() must produce exactly what run_fast() produces. It caches the decoded upper AND lower op per pc
++// (revalidated against the raw words every step, like run_fast), dispatches lower ops with computed goto and
++// hands every op it has no handler for to the original lower(), so rare ops are exact by construction.
++namespace {
++
++enum LowerKind : std::uint8_t {
++    lSlow, lI, lIadd, lIsub, lIaddi, lIand, lIor, lMove, lMr32, lLqi, lSqi, lLqd, lSqd, lMtir, lMfir, lIlwr, lIswr,
++    lLq, lSq, lIlw, lIsw, lIaddiu, lIsubiu, lB, lBal, lJr, lJalr, lIbeq, lIbne, lIbltz, lIbgtz, lIblez, lIbgez, lNop, lKinds
++};
++
++struct FastOp {
++    std::uint32_t lo = 0, hi = 0;
++    bool valid = false, ebit = false;
++    LowerKind kind = lSlow;
++    std::uint8_t dest = 0, it = 0, is = 0, id = 0, ft = 0, fs = 0, fsf = 0;
++    std::uint32_t imm = 0, aux = 0;   // imm: immediate / offset; aux: branch target (masked) or link value
++    Decoded up;
++};
++
++FastOp g_fast[2][2048];
++
++FastOp decode_fast(std::uint32_t lo, std::uint32_t hi, std::uint32_t pc, std::uint32_t mask) {
++    FastOp f;
++    f.lo = lo; f.hi = hi; f.valid = true; f.ebit = (hi & 0x40000000u) != 0;
++    f.up = decode_upper(lo, hi);
++    if (hi & 0x80000000u) { f.kind = lI; return f; }
++    const std::uint32_t w = lo;
++    f.dest = (w >> 21) & 15u; f.it = (w >> 16) & 15u; f.is = (w >> 11) & 15u; f.id = (w >> 6) & 15u;
++    f.ft = (w >> 16) & 31u; f.fs = (w >> 11) & 31u; f.fsf = (w >> 21) & 3u;
++    const std::int32_t imm11 = static_cast<std::int32_t>(w << 21) >> 21;
++    f.aux = (pc + 8u + static_cast<std::uint32_t>(imm11) * 8u) & mask;
++    if ((w >> 25) == 0x40u) {
++        const unsigned funct = w & 63u;
++        if (funct < 0x3C) {
++            switch (funct) {
++            case 0x30: f.kind = lIadd; break;
++            case 0x31: f.kind = lIsub; break;
++            case 0x32: f.kind = lIaddi; f.imm = static_cast<std::uint32_t>(static_cast<std::int32_t>(((w >> 6) & 31u) << 27) >> 27); break;
++            case 0x34: f.kind = lIand; break;
++            case 0x35: f.kind = lIor; break;
++            default: break;
++            }
++            return f;
++        }
++        switch (((w >> 6) & 31u) * 4u + (funct & 3u)) {
++        case 0x30: f.kind = lMove; break;
++        case 0x31: f.kind = lMr32; break;
++        case 0x34: f.kind = lLqi; break;
++        case 0x35: f.kind = lSqi; break;
++        case 0x36: f.kind = lLqd; break;
++        case 0x37: f.kind = lSqd; break;
++        case 0x3B: case 0x7B: f.kind = lNop; break;
++        case 0x3C: f.kind = lMtir; break;
++        case 0x3D: f.kind = lMfir; break;
++        case 0x3E: f.kind = lIlwr; break;
++        case 0x3F: f.kind = lIswr; break;
++        default: break;
++        }
++        return f;
++    }
++    f.imm = static_cast<std::uint32_t>(imm11);
++    switch (w >> 25) {
++    case 0x00: f.kind = lLq; break;
++    case 0x01: f.kind = lSq; break;
++    case 0x04: f.kind = lIlw; break;
++    case 0x05: f.kind = lIsw; break;
++    case 0x08: f.kind = lIaddiu; f.imm = ((w >> 10) & 0x7800u) | (w & 0x7FFu); break;
++    case 0x09: f.kind = lIsubiu; f.imm = ((w >> 10) & 0x7800u) | (w & 0x7FFu); break;
++    case 0x20: f.kind = lB; break;
++    case 0x21: f.kind = lBal; f.imm = (pc + 16u) / 8u; break;
++    case 0x24: f.kind = lJr; break;
++    case 0x25: f.kind = lJalr; f.imm = (pc + 16u) / 8u; break;
++    case 0x28: f.kind = lIbeq; break;
++    case 0x29: f.kind = lIbne; break;
++    case 0x2C: f.kind = lIbltz; break;
++    case 0x2D: f.kind = lIbgtz; break;
++    case 0x2E: f.kind = lIblez; break;
++    case 0x2F: f.kind = lIbgez; break;
++    default: break;
++    }
++    return f;
++}
++
++inline void load_q(Vu0Regs &r, const std::uint8_t *q, unsigned ft, unsigned dest) {
++    if (ft) for (int i = 0; i < 4; ++i) if (dest & (8u >> i)) std::memcpy(&r.vf[ft].w[i], q + i * 4, 4);
++}
++inline void store_q(const Vu0Regs &r, std::uint8_t *q, unsigned fs, unsigned dest) {
++    for (int i = 0; i < 4; ++i) if (dest & (8u >> i)) std::memcpy(q + i * 4, &r.vf[fs].w[i], 4);
++}
++inline void load_vi16(Vu0Regs &r, const std::uint8_t *q, unsigned it, unsigned dest) {
++    for (int i = 0; i < 4; ++i)
++        if (dest & (8u >> i)) { std::uint16_t v; std::memcpy(&v, q + i * 4, 2); store_vi(r, it, v); break; }
++}
++inline void store_vi32(std::uint8_t *q, std::uint32_t v, unsigned dest) {
++    for (int i = 0; i < 4; ++i) if (dest & (8u >> i)) std::memcpy(q + i * 4, &v, 4);
++}
++
++}
++
++void run_faster(int n, std::uint32_t address) {
++    Unit u = unit_of(n);
++    Vu0Regs &r = *u.regs;
++    if (g_scan[n]) scan_flags(n, u.code, u.code_mask + 1);
++    bool flags = g_flags_used[n];
++    FastOp *cache = g_fast[n];
++    vuops::FlagPipe pipe;
++    pipe.start(r);
++    u.pipe = &pipe;
++    std::uint32_t pc = address & u.code_mask, npc = (pc + 8u) & u.code_mask;
++    bool ending = false;
++    UpperOut out;
++    static const bool record_jumps = std::getenv("PS2_VU_RECORD") != nullptr || static_cast<bool>(g_options.on_vu_program);
++    static void *const kLabels[lKinds] = {
++        &&op_slow, &&op_i, &&op_iadd, &&op_isub, &&op_iaddi, &&op_iand, &&op_ior, &&op_move, &&op_mr32, &&op_lqi, &&op_sqi,
++        &&op_lqd, &&op_sqd, &&op_mtir, &&op_mfir, &&op_ilwr, &&op_iswr, &&op_lq, &&op_sq, &&op_ilw, &&op_isw, &&op_iaddiu,
++        &&op_isubiu, &&op_b, &&op_bal, &&op_jr, &&op_jalr, &&op_ibeq, &&op_ibne, &&op_ibltz, &&op_ibgtz, &&op_iblez,
++        &&op_ibgez, &&op_nop};
++    for (std::uint32_t steps = 0; steps < 1'000'000; ++steps) {
++        std::uint32_t lo, hi;
++        std::memcpy(&lo, u.code + pc, 4);
++        std::memcpy(&hi, u.code + pc + 4, 4);
++        FastOp &f = cache[pc >> 3];
++        if (!f.valid || f.lo != lo || f.hi != hi) {
++            f = decode_fast(lo, hi, pc, u.code_mask);
++            if (g_scan[n]) { scan_flags(n, u.code, u.code_mask + 1); flags = g_flags_used[n]; }
++        }
++        const std::uint32_t current = pc;
++        pc = npc;
++        npc = (npc + 8u) & u.code_mask;
++        ++pipe.t;
++        fast_upper(r, f.up, out);
++        goto *kLabels[f.kind];
++    op_slow: {
++        bool branch = false;
++        std::uint32_t target = npc;
++        lower(u, lo, current, target, branch);
++        if (branch) npc = target;
++        if (branch && record_jumps && n == 1 && ((lo >> 25) == 0x24u || (lo >> 25) == 0x25u)) lookup(target);
++        goto done;
++    }
++    op_i: r.i = lo; goto done;
++    op_nop: goto done;
++    op_iadd: store_vi(r, f.id, r.vi[f.is] + r.vi[f.it]); goto done;
++    op_isub: store_vi(r, f.id, r.vi[f.is] - r.vi[f.it]); goto done;
++    op_iaddi: store_vi(r, f.it, r.vi[f.is] + f.imm); goto done;
++    op_iand: store_vi(r, f.id, r.vi[f.is] & r.vi[f.it]); goto done;
++    op_ior: store_vi(r, f.id, r.vi[f.is] | r.vi[f.it]); goto done;
++    op_move: if (f.ft) for (int i = 0; i < 4; ++i) if (f.dest & (8u >> i)) r.vf[f.ft].w[i] = r.vf[f.fs].w[i]; goto done;
++    op_mr32: if (f.ft) { const Reg128 s = r.vf[f.fs]; for (int i = 0; i < 4; ++i) if (f.dest & (8u >> i)) r.vf[f.ft].w[i] = s.w[(i + 1) & 3]; } goto done;
++    op_lqi: load_q(r, qword(u, r.vi[f.is]), f.ft, f.dest); store_vi(r, f.is, r.vi[f.is] + 1u); goto done;
++    op_sqi: store_q(r, qword(u, r.vi[f.it]), f.fs, f.dest); store_vi(r, f.it, r.vi[f.it] + 1u); goto done;
++    op_lqd: store_vi(r, f.is, r.vi[f.is] - 1u); load_q(r, qword(u, r.vi[f.is]), f.ft, f.dest); goto done;
++    op_sqd: store_vi(r, f.it, r.vi[f.it] - 1u); store_q(r, qword(u, r.vi[f.it]), f.fs, f.dest); goto done;
++    op_mtir: store_vi(r, f.it, r.vf[f.fs].w[f.fsf]); goto done;
++    op_mfir: if (f.ft) { const std::uint32_t v = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(r.vi[f.is]))); for (int i = 0; i < 4; ++i) if (f.dest & (8u >> i)) r.vf[f.ft].w[i] = v; } goto done;
++    op_ilwr: load_vi16(r, qword(u, r.vi[f.is]), f.it, f.dest); goto done;
++    op_iswr: store_vi32(qword(u, r.vi[f.is]), r.vi[f.it], f.dest); goto done;
++    op_lq: load_q(r, qword(u, r.vi[f.is] + f.imm), f.ft, f.dest); goto done;
++    op_sq: store_q(r, qword(u, r.vi[f.it] + f.imm), f.fs, f.dest); goto done;
++    op_ilw: load_vi16(r, qword(u, r.vi[f.is] + f.imm), f.it, f.dest); goto done;
++    op_isw: store_vi32(qword(u, r.vi[f.is] + f.imm), r.vi[f.it], f.dest); goto done;
++    op_iaddiu: store_vi(r, f.it, r.vi[f.is] + f.imm); goto done;
++    op_isubiu: store_vi(r, f.it, r.vi[f.is] - f.imm); goto done;
++    op_b: npc = f.aux; goto done;
++    op_bal: store_vi(r, f.it, f.imm); npc = f.aux; goto done;
++    op_jr: npc = (static_cast<std::uint32_t>(r.vi[f.is]) * 8u) & u.code_mask; if (record_jumps && n == 1) lookup(npc); goto done;
++    op_jalr: { const std::uint32_t t = (static_cast<std::uint32_t>(r.vi[f.is]) * 8u) & u.code_mask; store_vi(r, f.it, f.imm); npc = t; if (record_jumps && n == 1) lookup(npc); goto done; }
++    op_ibeq: if (r.vi[f.is] == r.vi[f.it]) npc = f.aux; goto done;
++    op_ibne: if (r.vi[f.is] != r.vi[f.it]) npc = f.aux; goto done;
++    op_ibltz: if (static_cast<std::int16_t>(r.vi[f.is]) < 0) npc = f.aux; goto done;
++    op_ibgtz: if (static_cast<std::int16_t>(r.vi[f.is]) > 0) npc = f.aux; goto done;
++    op_iblez: if (static_cast<std::int16_t>(r.vi[f.is]) <= 0) npc = f.aux; goto done;
++    op_ibgez: if (static_cast<std::int16_t>(r.vi[f.is]) >= 0) npc = f.aux; goto done;
++    done:
++        if (out.target >= 0) {
++            if (out.target > 0) {
++                Reg128 &dst = out.target == kAcc ? r.acc : r.vf[out.target];
++                for (int i = 0; i < 4; ++i)
++                    if (out.dest & (8u >> i)) dst.w[i] = out.value.w[i];
++            }
++            if (out.flags && flags) {   // flag-skip: no flag-reading op in the uploaded code -> no MAC/status work
++                set_flags(r, out.value, out.dest);
++                pipe.set_mac(r.mac, r.status);
++            }
++        }
++        if (out.has_clip) {
++            r.clip = out.clip;
++            pipe.set_clip(out.clip, pipe.t);
++        }
++        r.vf[0].d[0] = 0;
++        r.vf[0].w[2] = 0;
++        r.vf[0].w[3] = fp::kOne;
++        r.vi[0] = 0;
++        if (ending) {
++            r.tpc = pc;
++            return;
++        }
++        ending = f.ebit;
++    }
++    std::fprintf(stderr, "[vu%d] program at 0x%04X did not end\n", n, address);
++}
++
++// PS2_VU_CHECK=1: shadow-run every fast-path VU1 call (an AOT-compiled program, or run_faster with PS2_VU_FAST=1)
++// against the interpreter (run_fast) from the same snapshot. GS kicks are captured, not sent. Compares registers,
++// flags, VU1 memory and the kicked GS packets; logs the first mismatch per program key; then keeps the
++// interpreter's state and sends the interpreter's kicks, so the game always runs on the reference result.
++namespace {
++
++struct VuSnap {
++    Vu0Regs regs;
++    std::vector<std::uint8_t> mem;
++    std::vector<std::vector<std::uint8_t>> kicks;
++};
++
++std::uint64_t g_check_calls = 0, g_check_mismatches = 0;
++
++const char *first_diff(const VuSnap &a, const VuSnap &b, int &index) {
++    index = -1;
++    for (int i = 0; i < 32; ++i) if (std::memcmp(&a.regs.vf[i], &b.regs.vf[i], 16) != 0) { index = i; return "vf"; }
++    if (std::memcmp(&a.regs.acc, &b.regs.acc, 16) != 0) return "acc";
++    for (int i = 0; i < 16; ++i) if (a.regs.vi[i] != b.regs.vi[i]) { index = i; return "vi"; }
++    if (a.regs.q != b.regs.q) return "q";
++    if (a.regs.p != b.regs.p) return "p";
++    if (a.regs.i != b.regs.i) return "i";
++    if (a.regs.r != b.regs.r) return "r";
++    if (a.regs.mac != b.regs.mac) return "mac";
++    if (a.regs.status != b.regs.status) return "status";
++    if (a.regs.clip != b.regs.clip) return "clip";
++    if (a.regs.tpc != b.regs.tpc) return "tpc";
++    for (std::size_t i = 0; i < a.mem.size(); i += 16) if (std::memcmp(&a.mem[i], &b.mem[i], 16) != 0) { index = static_cast<int>(i / 16); return "mem(qword)"; }
++    if (a.kicks.size() != b.kicks.size()) { index = static_cast<int>(b.kicks.size()); return "kick-count"; }
++    for (std::size_t k = 0; k < a.kicks.size(); ++k) if (a.kicks[k] != b.kicks[k]) { index = static_cast<int>(k); return "kick-packet"; }
++    return nullptr;
++}
++
++}
++
++void check_call(std::uint32_t pc, ProgramFn compiled) {
++    static std::unordered_set<std::uint64_t> reported;
++    static std::vector<std::uint8_t> before(16384);
++    const Vu0Regs before_regs = g_vu1;
++    std::memcpy(before.data(), g_vu1_mem, 16384);
++    VuSnap fast, ref;
++    std::vector<std::vector<std::uint8_t>> *const saved_sink = g_kick_sink;
++    // fast path
++    g_kick_sink = &fast.kicks;
++    if (compiled) {
++        std::int64_t escape = -1;
++        g_capture = &escape;
++        compiled(g_vu1, g_vu1_mem);
++        g_capture = nullptr;
++        if (escape >= 0) run_fast(1, static_cast<std::uint32_t>(escape));   // the escape continues in the interpreter
++    } else {
++        run_faster(1, pc);
++    }
++    fast.regs = g_vu1;
++    fast.mem.assign(g_vu1_mem, g_vu1_mem + 16384);
++    // reference: the interpreter from the same snapshot
++    g_vu1 = before_regs;
++    std::memcpy(g_vu1_mem, before.data(), 16384);
++    g_kick_sink = &ref.kicks;
++    run_fast(1, pc);
++    g_kick_sink = saved_sink;
++    ref.regs = g_vu1;
++    ref.mem.assign(g_vu1_mem, g_vu1_mem + 16384);
++    ++g_check_calls;
++    int index;
++    if (const char *what = first_diff(fast, ref, index)) {
++        ++g_check_mismatches;
++        const std::vector<std::uint32_t> pcs = reachable(g_vu1_code, 16383u, pc);
++        const std::uint64_t key = program_key(g_vu1_code, pcs, pc & 16383u);
++        if (reported.insert(key).second) {
++            std::string all;   // every field that differs, not just the first
++            VuSnap a = fast, b = ref;
++            for (int guard = 0; guard < 8; ++guard) {
++                int k;
++                const char *w = first_diff(a, b, k);
++                if (!w) break;
++                all += std::string(all.empty() ? "" : ",") + w;
++                if (!std::strcmp(w, "tpc")) { char t[48]; std::snprintf(t, sizeof t, "(fast 0x%04X ref 0x%04X)", a.regs.tpc, b.regs.tpc); all += t; a.regs.tpc = b.regs.tpc; }
++                else if (!std::strcmp(w, "vf")) a.regs.vf[k] = b.regs.vf[k];
++                else if (!std::strcmp(w, "vi")) a.regs.vi[k] = b.regs.vi[k];
++                else if (!std::strcmp(w, "acc")) a.regs.acc = b.regs.acc;
++                else if (!std::strcmp(w, "mac")) a.regs.mac = b.regs.mac;
++                else if (!std::strcmp(w, "status")) a.regs.status = b.regs.status;
++                else if (!std::strcmp(w, "clip")) a.regs.clip = b.regs.clip;
++                else if (!std::strcmp(w, "q")) a.regs.q = b.regs.q;
++                else if (!std::strcmp(w, "p")) a.regs.p = b.regs.p;
++                else if (!std::strcmp(w, "i")) a.regs.i = b.regs.i;
++                else if (!std::strcmp(w, "r")) a.regs.r = b.regs.r;
++                else if (!std::strcmp(w, "mem(qword)")) a.mem = b.mem;
++                else break;   // kick differences: last in the order
++            }
++            std::fprintf(stderr, "[vu-check] MISMATCH %s key %016llX entry 0x%04X: first diff %s%s%d; all: %s (kicks fast %zu ref %zu)\n",
++                         compiled ? "aot" : "vu_fast", static_cast<unsigned long long>(key), pc & 16383u, what, index >= 0 ? " #" : "",
++                         index, all.c_str(), fast.kicks.size(), ref.kicks.size());
++        }
++    }
++    if (g_check_calls % 20000 == 0)
++        std::fprintf(stderr, "[vu-check] %llu calls checked, %llu mismatches\n", static_cast<unsigned long long>(g_check_calls),
++                     static_cast<unsigned long long>(g_check_mismatches));
++    for (const auto &k : ref.kicks) gif::transfer(1, k.data(), static_cast<std::uint32_t>(k.size() / 16));   // keep the reference
++}
++
++void report_check() {
++    if (g_check_calls)
++        std::fprintf(stderr, "[vu-check] done: %llu calls checked, %llu mismatches\n", static_cast<unsigned long long>(g_check_calls),
++                     static_cast<unsigned long long>(g_check_mismatches));
++}
++// Synthetic self-test (no game data): random VU1 programs through run_fast and run_faster from the same random
++// state; returns how many differ in registers, flags, VU1 memory or GS kicks. Used by tests/vu_fast_selftest.
++int selftest_fast(std::uint32_t seed, int programs, bool verbose) {
++    std::uint32_t x = seed ? seed : 1u;
++    const auto rnd = [&x] { x ^= x << 13; x ^= x >> 17; x ^= x << 5; return x; };
++    static const std::uint8_t kUpper[] = {0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24,
++                                          0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F};
++    static const std::uint16_t kUpperSpecial[] = {0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0x22,
++                                                  0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2C, 0x2D, 0x2E, 0x2F, 0x2B};
++    // lower ops: fast-handled ones plus slow ones (div/sqrt/rsqrt, waitq, flag ops, mfp, rand, efu, xgkick, fcset...)
++    static const std::uint8_t kLowerSpecial[] = {0x30, 0x31, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
++                                                 0x40, 0x41, 0x42, 0x43, 0x64, 0x68, 0x69, 0x6C, 0x70, 0x72, 0x76, 0x78, 0x7B, 0x7C, 0x7E};
++    static const std::uint8_t kLowerFunct[] = {0x30, 0x31, 0x32, 0x34, 0x35};
++    static const std::uint8_t kLowerOp[] = {0x00, 0x01, 0x04, 0x05, 0x08, 0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
++                                            0x18, 0x1A, 0x1B, 0x1C, 0x20, 0x21, 0x28, 0x29, 0x2C, 0x2D, 0x2E, 0x2F};
++    int bad = 0;
++    std::vector<std::uint8_t> mem0(16384);
++    for (int p = 0; p < programs; ++p) {
++        const std::uint32_t entry = (rnd() % 64u) * 8u, len = 4u + rnd() % 60u;
++        std::memset(g_vu1_code, 0, 16384);
++        for (std::uint32_t k = 0; k < len; ++k) {
++            const std::uint32_t pc = entry + k * 8u;
++            std::uint32_t hi = rnd() & 0x01FFFFC0u, lo;   // random dest/ft/fs/fd
++            if (rnd() % 4u == 0) hi |= 0x3Cu | (kUpperSpecial[rnd() % sizeof kUpperSpecial] & 3u) | ((kUpperSpecial[rnd() % sizeof kUpperSpecial] >> 2) << 6);
++            else hi |= kUpper[rnd() % sizeof kUpper] | (rnd() & 3u);
++            const unsigned pick = rnd() % 8u;
++            if (pick == 0) { hi |= 0x80000000u; lo = rnd(); }                                         // I bit: lo is the I value
++            else if (pick <= 3) { const std::uint8_t s = kLowerSpecial[rnd() % sizeof kLowerSpecial];
++                                  lo = (0x40u << 25) | (rnd() & 0x01FFF800u) | ((s >> 2u) << 6) | 0x3Cu | (s & 3u); }
++            else if (pick == 4) lo = (0x40u << 25) | (rnd() & 0x01FFFFC0u) | kLowerFunct[rnd() % sizeof kLowerFunct];
++            else {
++                const std::uint8_t op = kLowerOp[rnd() % sizeof kLowerOp];
++                lo = (static_cast<std::uint32_t>(op) << 25) | (rnd() & 0x01FFF800u);
++                if (op >= 0x20) {   // forward branches only, landing at or before the E-bit op so every program ends
++                    if (k + 3u < len) lo |= (1u + rnd() % (len - 3u - k)) & 0x7FFu;
++                    else lo = 0x8000033Cu;
++                }
++                else lo |= rnd() & 0x7FFu;
++            }
++            if (k + 2u == len) hi |= 0x40000000u;                                                     // E bit, then one delay slot
++            if (k + 1u >= len - 1u && (lo >> 25) >= 0x20u && (lo >> 25) <= 0x2Fu && !(hi & 0x80000000u)) lo = 0x8000033Cu;
++            std::memcpy(g_vu1_code + pc, &lo, 4);
++            std::memcpy(g_vu1_code + pc + 4, &hi, 4);
++        }
++        code_changed(1);
++        Vu0Regs start{};
++        auto *raw = reinterpret_cast<std::uint32_t *>(&start);
++        for (std::size_t i = 0; i < offsetof(Vu0Regs, tpc) / 4; ++i) raw[i] = rnd() % 5u == 0 ? 0x3F800000u : rnd();
++        start.vf[0].d[0] = 0; start.vf[0].w[2] = 0; start.vf[0].w[3] = fp::kOne; start.vi[0] = 0;
++        for (auto &b : mem0) b = static_cast<std::uint8_t>(rnd());
++        VuSnap a, b;
++        std::vector<std::vector<std::uint8_t>> *const saved = g_kick_sink;
++        g_vu1 = start; std::memcpy(g_vu1_mem, mem0.data(), 16384); g_kick_sink = &a.kicks;
++        run_fast(1, entry);
++        a.regs = g_vu1; a.mem.assign(g_vu1_mem, g_vu1_mem + 16384);
++        g_vu1 = start; std::memcpy(g_vu1_mem, mem0.data(), 16384); g_kick_sink = &b.kicks;
++        run_faster(1, entry);
++        b.regs = g_vu1; b.mem.assign(g_vu1_mem, g_vu1_mem + 16384);
++        g_kick_sink = saved;
++        int index;
++        if (const char *what = first_diff(b, a, index)) {
++            if (verbose && bad < 10) std::fprintf(stderr, "[vu-selftest] program %d (entry 0x%04X, %u ops): %s %d\n", p, entry, len, what, index);
++            ++bad;
++        }
++    }
++    return bad;
++}
++// ---- end Lifeline ----
++
+ void run(int n, std::uint32_t address) {
+     static const bool exact = std::getenv("PS2_VU_EXACT") != nullptr;
+     if (n == 1 && !exact) {
+@@ -995,3 +1393,17 @@ void state(ps2::state::Stream &s) {
+ }
+ 
+ }
++
++// Lifeline: PS2_VU_SELFTEST=<programs> makes ps2run run the [qol] vu_fast self-test (random VU1 programs, no game
++// data, original vs faster interpreter) before anything else and exit: 0 if every result matched, 1 otherwise.
++namespace {
++const int g_vu_selftest = [] {
++    const char *v = std::getenv("PS2_VU_SELFTEST");
++    if (!v || !*v) return 0;
++    const int programs = std::atoi(v) > 0 ? std::atoi(v) : 20000;
++    const int bad = ps2::vu::selftest_fast(12345u, programs, true);
++    std::printf("vu_fast selftest: %d programs, %d mismatches (seed 12345)\n", programs, bad);
++    std::fflush(stdout);
++    std::_Exit(bad == 0 ? 0 : 1);
++}();
++}

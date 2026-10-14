@@ -33,6 +33,7 @@ QOL = [
     ("large_model",      "6 Large speech model",        "bool", False, "Uses %s if downloaded (better names, slower)" % LARGE_MODEL),
     ("widescreen",       "7 Native widescreen",         "bool", False, "True 16:9 with correct field of view"),
     ("faster_loads",     "8 Faster loads / skip FMV / 60fps", "bool", False, "Fast-forward loads, skip seen FMVs"),
+    ("vu_fast",          "9 Faster VU interpreter",     "bool", True,  "Faster vector-unit interpreter, same results; off = original (PS2_VU_FAST)"),
 ]
 # [build] options change the compiled binary: they take effect on the next Install / update.
 BUILD = [("cpu_tuned", "CPU-tuned build (rebuild)",

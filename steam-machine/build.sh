@@ -43,7 +43,7 @@ for t in git cmake ninja clang++ python3 curl unzip; do command -v $t >/dev/null
 SRC="$WORK/ps2-web-recomp"
 # Our patches, oldest first; see patches.sh for how applied ones are tracked.
 PATCHES=(0001-usbmic-hle-and-deci2-nohost.patch 0002-ee-overrides-and-voice-stage-a-b.patch 0003-input-remap-hook.patch
-         0004-audio-buffer-and-perf-log.patch 0005-hotkeys-and-clean-quit.patch)
+         0004-audio-buffer-and-perf-log.patch 0005-hotkeys-and-clean-quit.patch 0006-vu-fast-interpreter-and-check.patch)
 if [ ! -d "$SRC/.git" ]; then
   git clone "$UPSTREAM" "$SRC"
   git -C "$SRC" checkout --detach "$COMMIT"
@@ -103,6 +103,11 @@ FLAVOR_FILE="$WORK/build-flavor" build_native "$SRC" "$NAT" -DCMAKE_BUILD_TYPE=R
     -DPS2_GENERATED="$GEN" -DPS2_EXTRA_SOURCES="$VOICE_SRCS" || exit 1
 BUILD_OK=1; drop_ps2run_backup "$NAT"
 echo "== [time $(date +%H:%M:%S)] build flavor: $(head -1 "$WORK/build-flavor")" >> "$PROG"
+# [qol] vu_fast self-check: random VU1 programs (no game data) through both interpreters; must all match. Non-fatal:
+# a failure only means the toggle should stay off (run.sh falls back to the interpreter when it is off).
+if VU_ST=$(PS2_VU_SELFTEST=5000 "$NAT/ps2run" 2>/dev/null | tail -1) && [[ $VU_ST == *" 0 mismatches"* ]]; then
+  echo "== $VU_ST"; echo "== [time $(date +%H:%M:%S)] $VU_ST" >> "$PROG"
+else echo "== WARNING: vu_fast selftest failed (${VU_ST:-no output}); keep [qol] vu_fast off" | tee -a "$PROG"; fi
 
 phase "relink with voice module"
 # --- Vosk 0.3.45 + model (fetched on the device, never bundled; loaded at run time) ---

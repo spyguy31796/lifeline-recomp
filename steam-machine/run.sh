@@ -22,7 +22,7 @@ CFG="${LIFELINE_CONFIG:-$HERE/config.ini}"
 cfg() { [ -f "$CFG" ] || return 0; awk -F= -v s="[$1]" -v k="$2" '/^\[/{in_=($0==s)} in_ { kk=$1; gsub(/[ \t]/,"",kk); if (kk==k) { v=$2; sub(/[ \t]+[#;].*$/,"",v); gsub(/^[ \t]+|[ \t\r]+$/,"",v); print v; exit } }' "$CFG"; }
 on() { [ "$(cfg qol "$1")" = 1 ]; }
 [ "$DEBUG" = 1 ] && : "${PS2_PERF_LOG:=1}"   # once-a-second fps / CPU / GPU / audio / underrun line in logs/run-*.log
-QOL_VARS=(PS2_PERF_LOG PS2_AUDIO_BUFFER_MS PS2_AUDIO_SAMPLES PS2_INPUT_MAP PS2_SCALE PS2_VOICE_OVERLAY PS2_VOICE_CONFIG PS2_SAVE_SLOTS PS2_VOICE_ALWAYS_ON PS2_WIDESCREEN PS2_FAST_LOADS PS2_VOICE_OFF PS2_VOICE_ALIASES)
+QOL_VARS=(PS2_PERF_LOG PS2_AUDIO_BUFFER_MS PS2_AUDIO_SAMPLES PS2_INPUT_MAP PS2_SCALE PS2_VOICE_OVERLAY PS2_VOICE_CONFIG PS2_SAVE_SLOTS PS2_VOICE_ALWAYS_ON PS2_WIDESCREEN PS2_FAST_LOADS PS2_VOICE_OFF PS2_VOICE_ALIASES PS2_VU_FAST PS2_VU_CHECK)
 sc=$(cfg qol resolution_scale); [ -n "$sc" ] && [ "$sc" != 1 ] && : "${PS2_SCALE:=$sc}"        # item 3 (works)
 on voice_readout && : "${PS2_VOICE_OVERLAY:=1}"                         # item 1 (reserved)
 on voice_tuning  && : "${PS2_VOICE_CONFIG:=$HERE/voice.ini}"            # item 2 (reserved)
@@ -31,6 +31,7 @@ on always_on     && : "${PS2_VOICE_ALWAYS_ON:=1}"                       # item 5
 if on large_model && [ -z "$_m" ] && [ -d "$VOSK_DIR/vosk-model-en-us-0.22" ]; then PS2_VOICE_VOSK_MODEL="$VOSK_DIR/vosk-model-en-us-0.22"; fi  # item 6
 on widescreen    && : "${PS2_WIDESCREEN:=1}"                            # item 7 (reserved)
 on faster_loads  && : "${PS2_FAST_LOADS:=1}"                            # item 8 (reserved)
+on vu_fast       && : "${PS2_VU_FAST:=1}"                               # item 9 (works; 0006 patch, interpreter fallback when off)
 [ "$(cfg launch voice_off)" = 1 ] && : "${PS2_VOICE_OFF:=1}"
 # Controller bindings + hotkeys: [bindings] -> PS2_INPUT_MAP="circle=b,paddle1;lx=leftx;hk_quit=back&start@1500;..." (read by ourcode/input in ps2run)
 if [ -f "$CFG" ] && [ -z "${PS2_INPUT_MAP+x}" ]; then
