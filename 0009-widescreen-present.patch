@@ -1,0 +1,84 @@
+diff --git a/host/window.cpp b/host/window.cpp
+index cc1e16c..5df1b60 100644
+--- a/host/window.cpp
++++ b/host/window.cpp
+@@ -226,7 +226,7 @@ void show_pixels(const std::uint32_t *rgba, std::uint32_t w, std::uint32_t h) {
+     if (w != g_tex_w || h != g_tex_h) {
+         if (g_texture) SDL_DestroyTexture(g_texture);
+         g_texture = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, static_cast<int>(w), static_cast<int>(h));
+-        SDL_RenderSetLogicalSize(g_renderer, static_cast<int>(w), static_cast<int>(w) * 3 / 4);
++        SDL_RenderSetLogicalSize(g_renderer, static_cast<int>(w), static_cast<int>(static_cast<float>(w) / ps2::display_aspect()));
+         g_tex_w = w;
+         g_tex_h = h;
+     }
+@@ -234,7 +234,7 @@ void show_pixels(const std::uint32_t *rgba, std::uint32_t w, std::uint32_t h) {
+     SDL_RenderClear(g_renderer);
+     SDL_RenderCopy(g_renderer, g_texture, nullptr, nullptr);
+     if (const float p = g_quit_progress.load(); p > 0.0f) {   // hold-to-quit bar along the bottom edge
+-        const int lw = static_cast<int>(w), lh = static_cast<int>(w) * 3 / 4;
++        const int lw = static_cast<int>(w), lh = static_cast<int>(static_cast<float>(w) / ps2::display_aspect());
+         const SDL_Rect back{0, lh - lh / 40, lw, lh / 40}, bar{0, lh - lh / 40, static_cast<int>(lw * p), lh / 40};
+         SDL_SetRenderDrawColor(g_renderer, 40, 40, 40, 255);
+         SDL_RenderFillRect(g_renderer, &back);
+@@ -365,7 +365,7 @@ bool open_window(bool fullscreen) {
+         return false;
+     }
+     const Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0u);
+-    g_window = SDL_CreateWindow("ps2-web-recomp", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 720, flags);
++    g_window = SDL_CreateWindow("ps2-web-recomp", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, ps2::display_aspect() > 1.5f ? 1280 : 960, 720, flags);
+     if (!g_window) {
+         std::fprintf(stderr, "SDL: %s\n", SDL_GetError());
+         return false;
+diff --git a/runtime/include/ps2/system.hpp b/runtime/include/ps2/system.hpp
+index 0eb5552..38a4c6f 100644
+--- a/runtime/include/ps2/system.hpp
++++ b/runtime/include/ps2/system.hpp
+@@ -117,4 +117,7 @@ void set_pad_pressure(int button, std::uint8_t value);
+ std::uint16_t pad_rumble();
+ void set_audio_sink(std::function<void(const std::int16_t *samples, std::size_t frames)> sink);
+ 
++// Display aspect for presenting (Lifeline Recomp 0009): 16/9 with PS2_WIDESCREEN=1, else 4/3.
++float display_aspect();
++
+ }
+diff --git a/runtime/src/gs/gpu/gpu.cpp b/runtime/src/gs/gpu/gpu.cpp
+index f3f0992..6e24756 100644
+--- a/runtime/src/gs/gpu/gpu.cpp
++++ b/runtime/src/gs/gpu/gpu.cpp
+@@ -905,7 +905,7 @@ void submit(WGPUTextureView present_view = nullptr) {
+         rd.colorAttachments = &color;
+         WGPURenderPassEncoder rp = wgpuCommandEncoderBeginRenderPass(enc, &rd);
+         const float w = static_cast<float>(g_surface_width), h = static_cast<float>(g_surface_height);
+-        const float vw = std::min(w, h * 4.0f / 3.0f), vh = vw * 3.0f / 4.0f;
++        const float ar = ps2::display_aspect(), vw = std::min(w, h * ar), vh = vw / ar;
+         wgpuRenderPassEncoderSetViewport(rp, (w - vw) * 0.5f, (h - vh) * 0.5f, vw, vh, 0.0f, 1.0f);
+         wgpuRenderPassEncoderSetPipeline(rp, g_blit);
+         wgpuRenderPassEncoderSetBindGroup(rp, 0, g_blit_group, 0, nullptr);
+@@ -1744,7 +1744,7 @@ bool present(const DisplaySource &src) {
+     const std::uint32_t param = push_params({src.fbp, src.fbw, src.psm, src.dbx, src.dby, src.width, src.height, src.halved ? 1u : 0u, current});
+     g_commands.push_back({kDisplay, (src.width * g_scale + 7) / 8, (src.height * g_scale + 7) / 8, param});
+     const float sw = static_cast<float>(g_surface_width), sh = static_cast<float>(g_surface_height);
+-    const float vw = std::min(sw, sh * 4.0f / 3.0f), vh = vw * 3.0f / 4.0f;
++    const float ar = ps2::display_aspect(), vw = std::min(sw, sh * ar), vh = vw / ar;
+     const std::uint32_t blit[8] = {src.width * g_scale, src.height * g_scale, current, previous, blend ? 1u : 0u, static_cast<std::uint32_t>(vw), static_cast<std::uint32_t>(vh), 0};
+     wgpuQueueWriteBuffer(g_queue, g_blit_params, 0, blit, sizeof blit);
+     ++g_field;
+diff --git a/runtime/src/system.cpp b/runtime/src/system.cpp
+index 466c9d7..10c6e52 100644
+--- a/runtime/src/system.cpp
++++ b/runtime/src/system.cpp
+@@ -34,6 +34,14 @@
+ 
+ namespace ps2 {
+ 
++float display_aspect() {   // Lifeline Recomp 0009: read once, the window and GPU present use it every frame
++    static const float aspect = [] {
++        const char *ws = std::getenv("PS2_WIDESCREEN");
++        return ws && *ws == '1' ? 16.0f / 9.0f : 4.0f / 3.0f;
++    }();
++    return aspect;
++}
++
+ Cpu g_cpu;
+ Options g_options;
+ 
