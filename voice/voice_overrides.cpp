@@ -179,7 +179,7 @@ bool deliver_recognition() {
     if (!g.rec->poll(r)) return false;
     const bool accept = !r.words.empty();
     // Speech that matched nothing (off-grammar or [unk]) is delivered as a VoCon-style rejection: no words,
-    // confidence 0, result id -1. GetStatus then reports 4 and CCanesVoice plays its normal "BAD!" feedback
+    // confidence 0, result id -1. GetStatus then reports 4 and the game's voice object plays its normal "BAD!" feedback
     // (verified in the tutorial). Only an empty decode (silence / accidental tap) leaves the engine idle.
     const bool heard = !r.raw.empty();
     if (accept) write_result(r.words, r.confidence, 0);
@@ -284,10 +284,18 @@ bool get_status(ps2::Cpu &, std::uint32_t) {
     return false;
 }
 
-// Passive: remember the game's CCanesVoice (a0 of Execute) so a slot load can put its listening flag back.
-std::atomic<std::uint32_t> g_canes{0};
-bool canes_execute(ps2::Cpu &c, std::uint32_t) {
-    g_canes.store(c.r[4].w[0], std::memory_order_relaxed);
+// Passive: after a slot load, put the game's voice object's own listening flag (this+0x10) back to idle.
+// Done here, with this call's `this`, never with an address seen before the load: a slot from another scene
+// can place the object elsewhere, and a stale pointer would write into unrelated memory.
+std::atomic<bool> g_reset_game_listening{false};
+bool voice_object_execute(ps2::Cpu &c, std::uint32_t) {
+    if (g_reset_game_listening.exchange(false, std::memory_order_relaxed)) {
+        const std::uint32_t self = c.r[4].w[0];
+        const bool was = ps2::ld32(self + kVoiceObjListeningOff) == 1;
+        if (was) ps2::st32(self + kVoiceObjListeningOff, 0);
+        std::fprintf(stderr, "[voice] f%llu game voice object %s\n", (unsigned long long)now(),
+                     was ? "was listening, reset to idle" : "idle");
+    }
     return false;
 }
 
@@ -301,7 +309,7 @@ struct Registrar {
         ps2::register_override(kPostMessage, post_message);
         ps2::register_override(kMatcher, matcher);
         ps2::register_override(kGetStatus, get_status);
-        ps2::register_override(kCanesExecute, canes_execute);
+        ps2::register_override(kVoiceObjExecute, voice_object_execute);
         g_registered = true;
     }
 } g_registrar;
@@ -328,7 +336,7 @@ extern "C" const char *lifeline_voice_context() {
 
 // Emulation thread, right after a slot was loaded: the game's memory is from the state, our side is not.
 // Drop the capture and pending context, restore the saved context's vocabulary, and if the state was taken
-// mid-listen put the recognizer (kState, 0x2DBE38) and the game's own listening flag (CCanesVoice+0x10) back
+// mid-listen put the recognizer (kState, 0x2DBE38) and the game's voice object's own listening flag (this+0x10, at its next Execute) back
 // to idle so the next push-to-talk starts fresh (cmd 1 on press, cmd 2 on release).
 extern "C" void lifeline_voice_after_load(const char *context) {
     using namespace voice;
@@ -344,13 +352,10 @@ extern "C" void lifeline_voice_after_load(const char *context) {
     if (g.context != "?") vocab_for_context();
     const std::uint32_t st = ps2::ld32(kState);
     if (st == 1) write_no_result();   // listening -> idle (2), no words
-    // The game's own CCanesVoice snapshot can also say "listening" (state taken mid-listen). Left that way, its
-    // next Circle press only posts a stop (cmd 2) with no start (cmd 1) and the word is lost. Put it back to
-    // idle too, so that press posts cmd 1 and the release cmd 2, like a fresh push-to-talk.
-    const std::uint32_t canes = g_canes.load(std::memory_order_relaxed);
-    const bool game_listening = canes && ps2::ld32(canes + kCanesListeningOff) == 1;
-    if (game_listening) ps2::st32(canes + kCanesListeningOff, 0);
-    std::fprintf(stderr, "[voice] f%llu state loaded: context %s, recognizer %s, game %s\n", (unsigned long long)now(), g.context.c_str(),
-                 st == 1 ? "was listening, reset to idle" : "idle",
-                 !canes ? "not seen yet" : game_listening ? "was listening, reset to idle" : "idle");
+    // The game's voice object can also say "listening" in a state taken mid-listen. Left that way, its next
+    // Circle press only posts a stop (cmd 2) with no start (cmd 1) and the word is lost. Its next Execute call
+    // (before it reads the pad) puts it back to idle; see voice_object_execute.
+    g_reset_game_listening.store(true, std::memory_order_relaxed);
+    std::fprintf(stderr, "[voice] f%llu state loaded: context %s, recognizer %s\n", (unsigned long long)now(), g.context.c_str(),
+                 st == 1 ? "was listening, reset to idle" : "idle");
 }

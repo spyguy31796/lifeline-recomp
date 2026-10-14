@@ -9,7 +9,7 @@ source "$HERE/lifeline.env"
 [ -f "$HERE/saves/room001.state" ] || { echo "FAIL: no $HERE/saves/room001.state (run make-skip-state.sh)"; exit 1; }
 [ -x "$PS2RUN" ] || { echo "FAIL: no ps2run"; exit 1; }
 
-# 1) Capture a mid-listen state: hold Circle across the save frame so CCanesVoice+0x10 and kState are listening.
+# 1) Capture a mid-listen state: hold Circle across the save frame so the game's voice object (+0x10) and kState are listening.
 #    CLI --save-state is not gated by voice_busy, so this is allowed (hotkey save would refuse).
 #    --frames / --press / --save-state use absolute frame numbers (the loaded state's frame, not offsets).
 rm -rf "$HERE"/saves/slot[1-4].state "$HERE"/saves/slot[1-4].voice "$HERE"/saves/before-load.state*
@@ -57,7 +57,7 @@ fail=0
 # F8 hold loads slot 1 (the mid-listen capture). after_load must clear the game listening flag.
 xdotool keydown F8; sleep 0.8; xdotool keyup F8; sleep 3
 grep -q "\[slots\] loaded slot 1" "$LOG" || { echo "FAIL: slot 1 not loaded"; fail=1; }
-grep -q "game was listening, reset to idle" "$LOG" || { echo "FAIL: the slot was not mid-listen on the game side"; fail=1; }
+grep -q "game voice object was listening, reset to idle" "$LOG" || { echo "FAIL: the slot was not mid-listen on the game side"; fail=1; }
 # One Circle press (keyboard X = Circle). Must issue cmd 1 on press and cmd 2 on release.
 xdotool keydown x; sleep 0.6; xdotool keyup x; sleep 2
 # After the load, the first cmd 1 / cmd 2 pair is the one we care about (ignore any from before the load).

@@ -34,7 +34,7 @@ grep -q "patches already applied: .*0004-audio-buffer-and-perf-log.patch" "$T/bu
 has_hotkeys "$N/ps2run" && ok "ps2run links the hotkey code" || bad "no hotkey code in ps2run"
 # build.sh's PATCHES=( ) list, the marker and the patch files on disk must all agree, and never be empty
 NL=$(sed -n '/^PATCHES=(/,/)/p' "$REPO/steam-machine/build.sh" | sed 's/#.*//' | grep -o '[0-9]\{4\}-[A-Za-z0-9._-]*\.patch' | wc -l)
-NP=$(find "$REPO" -maxdepth 1 -name '0*.patch' | wc -l)   # every kit patch (0006 is reserved, so not 0001..N)
+NP=$(find "$REPO" -maxdepth 1 -name '0*.patch' | wc -l)   # every kit patch on disk
 NM=$(grep -c " [0-9a-f]\{64\}$" "$S/.git/lifeline-patches" || true)
 [ "$NL" -ge 6 ] && ok "build.sh PATCHES lists $NL patches (>= 6)" || bad "build.sh PATCHES lists only $NL patches"
 [ "$NL" = "$NM" ] && [ "$NM" = "$NP" ] && ok "marker lists $NM patches with sha256 = PATCHES list = $NP files" \

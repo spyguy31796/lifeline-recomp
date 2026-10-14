@@ -205,7 +205,7 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
 - Voice-safe: save and load are refused (`[slots] not now: ...`) while Circle (push-to-talk) is held, while a
   command is being recognized or a new voice context is loading, and for 1.5 s after a result is handed to the game.
   The active voice context is stored in `slotN.voice` and restored on load, along with its vocabulary. A state
-  captured mid-listen has the game's recognizer (0x2DBE38) and CCanesVoice's own listening flag (this+0x10) reset to idle, so the next Circle press posts cmd 1 (start) then cmd 2 (stop) and listens fresh — not a lone stop. No default
+  captured mid-listen has the game's recognizer (0x2DBE38) and the game's voice object's own listening flag (this+0x10) reset to idle, so the next Circle press posts cmd 1 (start) then cmd 2 (stop) and listens fresh — not a lone stop. No default
   chord uses Circle. If `slotN.voice` can't be written after a save, the old one is removed so it is never paired
   with the new state (that slot then loads with an unknown context until the game sets the next one).
   Tests: `steam-machine/tests/save-slots-smoke.sh` and `save-slots-midlisten-smoke.sh` (a slot captured mid-listen,
@@ -349,7 +349,7 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `0004-audio-buffer-and-perf-log.patch` | Patch for ps2-web-recomp: configurable audio pacing buffer, underrun counter, `[perf]` log line |
 | `0005-hotkeys-and-clean-quit.patch` | Patch for ps2-web-recomp: hotkey hook (fullscreen, hold-to-quit), card save and audio drain on exit |
 | `0006-vu-fast-interpreter-and-check.patch` | Patch for ps2-web-recomp: faster VU1 interpreter (`PS2_VU_FAST`), `PS2_VU_CHECK` shadow harness, `PS2_VU_SELFTEST` (only touches `runtime/src/vu_micro.cpp`) |
-| `0007-save-state-slots.patch` | Patch for ps2-web-recomp: `request_state()`, a save/load at the next frame boundary for the save-slot hotkeys (0006 is reserved) |
+| `0007-save-state-slots.patch` | Patch for ps2-web-recomp: `request_state()`, a save/load at the next frame boundary for the save-slot hotkeys |
 | `input/` | Controller remap layer and hotkeys (`PS2_INPUT_MAP` parser, chord/hold state, SDL apply) and their unit tests |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 | `steam-machine/cpu_flags.sh` | CPU-tuned build flags (`[build] cpu_tuned`) with generic fallback; test in `steam-machine/tests/` |
