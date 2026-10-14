@@ -40,6 +40,15 @@ unsigned HotkeyState::update(std::uint32_t now, const Map &m, const std::functio
     return fired;
 }
 
+bool HotkeyState::held(int hotkey, const Map &m, const std::function<bool(const Source &)> &down) const {
+    for (const Chord &c : m.hk[hotkey]) {
+        bool all = !c.keys.empty();
+        for (const Source &k : c.keys) all = all && down(k);
+        if (all) return true;
+    }
+    return false;
+}
+
 std::uint16_t HotkeyState::mask(const Map &m, const std::function<std::uint16_t(const Source &)> &game_bits) const {
     std::uint16_t bits = 0, keep = 0;
     for (int h = 0; h < kHotkeyCount; ++h)

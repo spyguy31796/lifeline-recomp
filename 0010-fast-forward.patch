@@ -1,0 +1,156 @@
+diff --git a/host/ff_pacing.hpp b/host/ff_pacing.hpp
+new file mode 100644
+index 0000000..bbcf238
+--- /dev/null
++++ b/host/ff_pacing.hpp
+@@ -0,0 +1,25 @@
++// Lifeline Recomp 0010: fast-forward speed cap (header-only so it can be unit-tested with a fake clock).
++#pragma once
++
++#include <cstdint>
++
++namespace ff_pacing {
++
++// One step per fast-forward frame. Times are performance-counter ticks (`frequency` per second); `period` is
++// one frame at the capped speed. Returns how many ms to sleep (rounded up, so a sleep never ends early). The
++// deadline advances by exactly one period per frame and the gap is signed, so cheap frames can't wrap it and
++// skip the wait; if we fall more than a period behind (slow frames), the deadline resyncs to now.
++struct Limiter {
++    std::uint64_t last = 0;
++    void reset() { last = 0; }
++    std::uint32_t step(std::uint64_t now, std::uint64_t period, std::uint64_t frequency) {
++        if (!last) last = now;
++        last += period;
++        const std::int64_t ahead = static_cast<std::int64_t>(last - now);
++        if (ahead > 0) return static_cast<std::uint32_t>((static_cast<std::uint64_t>(ahead) * 1000 + frequency - 1) / frequency);
++        if (-ahead > static_cast<std::int64_t>(period)) last = now;
++        return 0;
++    }
++};
++
++}  // namespace ff_pacing
+diff --git a/host/window.cpp b/host/window.cpp
+index 5df1b60..acddaa3 100644
+--- a/host/window.cpp
++++ b/host/window.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include "ps2/system.hpp"
+ #include "audio_pacing.hpp"
++#include "ff_pacing.hpp"
+ 
+ #include <SDL.h>
+ #include <SDL_syswm.h>
+@@ -265,7 +266,48 @@ Uint32 audio_target_ms() { return g_target_ms; }
+ std::atomic<std::uint64_t> g_starved_frames{0}, g_starve_events{0};
+ audio_pacing::Stats g_audio_stats;   // emulation thread only (pace)
+ 
++// --- Fast-forward (Lifeline Recomp 0010) -------------------------------------------------------------
++// While ps2::ff_active(): the limiter and audio pacing are bypassed, the game's audio is dropped, the
++// device is kept fed with silence (no underrun, no stop), the starvation stats are frozen, and speed is
++// capped at PS2_FF_MAX x real time so present doesn't spin. On release the queue is flushed and re-primed
++// with silence to the pacing cap (target + 2 device buffers). FF frames are tagged [perf-ff], not [perf].
++std::atomic<std::uint64_t> g_ff_frames{0};
++bool ff_pace() {   // emulation thread, once per frame; true = FF frame, pace() returns
++    static bool was = false;
++    static ff_pacing::Limiter limiter;
++    if (!ps2::ff_active()) {
++        if (!was) return false;
++        was = false;
++        if (g_audio) {
++            const std::vector<std::uint8_t> silence(audio_pacing::cap_bytes(audio_target_ms(), g_device_buffer_bytes, kAudioBytesPerMs), 0);
++            SDL_LockAudioDevice(g_audio);   // flush + re-prime as one step: the callback never sees an empty queue
++            SDL_ClearQueuedAudio(g_audio);
++            SDL_QueueAudio(g_audio, silence.data(), static_cast<Uint32>(silence.size()));
++            SDL_UnlockAudioDevice(g_audio);
++        }
++        g_last = 0;
++        std::fprintf(stderr, "[ff] off after %llu frames, audio re-primed to %u ms\n", static_cast<unsigned long long>(g_ff_frames.load(std::memory_order_relaxed)),
++                     g_audio ? SDL_GetQueuedAudioSize(g_audio) / kAudioBytesPerMs : 0u);
++        return false;
++    }
++    if (!was) { was = true; limiter.reset(); g_ff_frames.store(0, std::memory_order_relaxed); std::fprintf(stderr, "[ff] on (max %dx)\n", ps2::ff_max()); }
++    g_ff_frames.fetch_add(1, std::memory_order_relaxed);
++    if (g_audio) {
++        static const std::vector<std::uint8_t> silence(400 * kAudioBytesPerMs, 0);   // >= the largest target (400 ms)
++        SDL_LockAudioDevice(g_audio);   // size + refill under one lock: never write into a queue the device is reading
++        const Uint32 want = audio_target_ms() * kAudioBytesPerMs, queued = SDL_GetQueuedAudioSize(g_audio);   // silence at the pacing level
++        if (queued < want) SDL_QueueAudio(g_audio, silence.data(), std::min<Uint32>(want - queued, static_cast<Uint32>(silence.size())));
++        SDL_UnlockAudioDevice(g_audio);
++    }
++    const std::uint64_t frequency = SDL_GetPerformanceFrequency();
++    const std::uint64_t period = frequency / ((ps2::g_options.pal ? 50u : 60u) * static_cast<unsigned>(ps2::ff_max()));
++    if (const Uint32 ms = limiter.step(SDL_GetPerformanceCounter(), period, frequency)) SDL_Delay(ms);   // speed cap (ff_pacing.hpp)
++    return true;
++}
++// --- end fast-forward ------------------------------------------------------------------------------------
++
+ void pace() {
++    if (ff_pace()) return;   // Lifeline 0010: fast-forward bypasses the limiter and audio pacing
+     if (g_audio) {
+         g_audio_stats.frame(SDL_GetQueuedAudioSize(g_audio), g_device_buffer_bytes);
+         g_starved_frames.store(g_audio_stats.starved_frames);
+@@ -330,7 +372,12 @@ void show_speed() {
+     // PS2_PERF_LOG=1 (window mode): one line per second on stderr; run.sh --debug saves it to logs/run-*.log.
+     static const bool perf_log = [] { const char *e = std::getenv("PS2_PERF_LOG"); return e && *e == '1'; }();
+     static std::uint64_t last_frames_starved = 0, last_events = 0;
+-    if (perf_log) {
++    static std::uint64_t ff_seen = 0;   // Lifeline 0010: a second with FF frames is logged as [perf-ff]
++    const std::uint64_t ffn = g_ff_frames.load(std::memory_order_relaxed), ff_now = ffn - std::min(ffn, ff_seen);
++    ff_seen = ffn;
++    if (perf_log && (ff_now || ps2::ff_active())) std::fprintf(stderr, "[perf-ff] %.1f fps  CPU %.0f%%  audio %.0f ms (silence)  (fast-forward, excluded from [perf])\n",
++                                                             static_cast<double>(frames) / seconds, (cpu - cpu_start) / seconds * 100.0, queued);
++    else if (perf_log) {
+         const std::uint64_t sf = g_starved_frames.load(), ev = g_starve_events.load();
+         std::fprintf(stderr, "[perf] %.1f fps  CPU %.0f%%  GPU %.0f%%  audio %.0f ms (target %u)  starved frames %llu (+%llu)  dropouts %llu (+%llu)\n",
+                      static_cast<double>(frames) / seconds, (cpu - cpu_start) / seconds * 100.0, (gpu - gpu_start) / (seconds * 10.0), queued, audio_target_ms(),
+@@ -353,6 +400,7 @@ void on_vblank() {
+ }
+ 
+ void queue_audio(const std::int16_t *samples, std::size_t frames) {
++    if (ps2::ff_active()) return;   // Lifeline 0010: game audio is dropped during fast-forward
+     if (SDL_GetQueuedAudioSize(g_audio) > audio_pacing::cap_bytes(audio_target_ms(), g_device_buffer_bytes, kAudioBytesPerMs)) return;
+     SDL_QueueAudio(g_audio, samples, static_cast<Uint32>(frames * 4));
+ }
+diff --git a/runtime/include/ps2/system.hpp b/runtime/include/ps2/system.hpp
+index 59836e6..bdf593a 100644
+--- a/runtime/include/ps2/system.hpp
++++ b/runtime/include/ps2/system.hpp
+@@ -132,4 +132,11 @@ void set_audio_sink(std::function<void(const std::int16_t *samples, std::size_t
+ // Display aspect for presenting (Lifeline Recomp 0009): 16/9 with PS2_WIDESCREEN=1, else 4/3.
+ float display_aspect();
+ 
++// Fast-forward (Lifeline Recomp 0010). Set by the host's hotkey layer while the FF chord is held; read with a
++// relaxed load by the frame limiter / audio pacing (host/window.cpp) to bypass them. ff_max(): PS2_FF_MAX,
++// the speed cap in multiples of real time (default 4, 1-16).
++bool ff_active();
++void set_ff_active(bool on);
++int ff_max();
++
+ }
+diff --git a/runtime/src/system.cpp b/runtime/src/system.cpp
+index 776d31a..5b423dd 100644
+--- a/runtime/src/system.cpp
++++ b/runtime/src/system.cpp
+@@ -44,6 +44,21 @@ float display_aspect() {   // Lifeline Recomp 0009: read once, the window and GP
+     return aspect;
+ }
+ 
++// Fast-forward flag (Lifeline Recomp 0010): written by the host thread, read once per frame by pace().
++static std::atomic<bool> g_ff_active{false};
++bool ff_active() { return g_ff_active.load(std::memory_order_relaxed); }
++void set_ff_active(bool on) { g_ff_active.store(on, std::memory_order_relaxed); }
++int ff_max() {
++    static const int max = [] {
++        const char *e = std::getenv("PS2_FF_MAX");
++        const int v = e && *e ? std::atoi(e) : 4;
++        if (v >= 1 && v <= 16) return v;
++        std::fprintf(stderr, "[ff] PS2_FF_MAX=%s is not 1-16; using 4\n", e);
++        return 4;
++    }();
++    return max;
++}
++
+ Cpu g_cpu;
+ Options g_options;
+ 
