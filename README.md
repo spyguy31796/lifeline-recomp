@@ -43,7 +43,7 @@ All commands run in Desktop Mode → Konsole as your normal user. Nothing needs 
    Watch progress with `tail -f ~/lifeline-recomp/build-progress.log` (full log: `build.log`).
    The script:
    - creates the `lifeline-build` distrobox and installs the compilers and libraries inside it
-   - clones `snuri00/ps2-web-recomp` at the pinned, tested commit and applies `0001` + `0002`
+   - clones `snuri00/ps2-web-recomp` at the pinned, tested commit and applies `0001` + `0002` + `0003`
    - recompiles your disc's executable and links in the voice module from `voice/`
    - downloads Vosk (see below)
    - extracts the voice phrase tables from your ISO into `~/lifeline-recomp/voice-assets/`
@@ -134,6 +134,27 @@ After an install it is also copied to `~/lifeline-recomp/launcher/launcher.sh`.
 (or the kit copy) → Add, rename it "Lifeline". In Game Mode it opens fullscreen; PLAY starts `run.sh` with your settings and
 returns to the launcher if the game exits with an error.
 
+### Controller bindings
+Launcher → **Controller bindings** remaps every PS2 pad input: Circle (push-to-talk), Cross, Square, Triangle, the
+D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
+- **A** rebinds the highlighted input: release everything, then press and release the new button, trigger, stick
+  direction, hat or key. **Y** adds a second input (e.g. B *and* a back paddle for push-to-talk), **X** clears it,
+  **B** goes back and saves. The last row resets everything to the default layout.
+- **Cancel:** hold the pressed input for 1.5 s, or press nothing for 6 s. Capture only starts once every button is
+  released, so the A you used to open it is never bound by accident.
+- Sticks take a whole axis: push right (X) or down (Y) to bind normally, the other way to bind it inverted.
+- Saved in `config.ini` under `[bindings]` (no section = the built-in layout). `run.sh` passes it to the game as
+  `PS2_INPUT_MAP`; an exported `PS2_INPUT_MAP` wins, and an empty one forces the built-in layout. Headless:
+  `launcher.sh --set "bindings.circle=b, paddle1"`, `launcher.sh --reset-bindings`.
+- Source names: `a b x y back guide start leftstick rightstick leftshoulder rightshoulder dpup dpdown dpleft dpright
+  misc1 paddle1-4 touchpad`, axes `leftx lefty rightx righty lefttrigger righttrigger` (`+`/`-` prefix = direction for
+  buttons, `~` suffix = inverted for sticks), raw `joy:bN`, `joy:aN+`, `joy:hN.up`, and keyboard `key:<SDL key name>`
+  (the built-in keyboard keys keep working).
+- In Game Mode, Steam Input sits in front of the game: back grips/paddles only reach the game if the Steam controller
+  layout passes them through (or maps them to a button you then bind here).
+- The game side is `input/` (our code) plus `0003-input-remap-hook.patch`, a weak hook in the runner's input poll;
+  `build.sh` applies it (also to existing checkouts) and links `input/*.cpp`. Rebuild once (Install / update) to get it.
+
 **Headless checks:** `launcher.sh --print-config`, `launcher.sh --dry-run`, `launcher.sh --set qol.resolution_scale=2`,
 and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.sh would pass and exits.
 
@@ -154,6 +175,8 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `voice/` | Voice module that replaces the original recognizer (Vosk backend, SDL mic, phrase-table reader, natural-sentence matcher) |
 | `voice/tools/` | `fat.py` / `arcx.py` extract the phrase tables from your ISO; `build_aliases.py` builds the local alias table |
 | `steam-machine/` | `build.sh`, `run.sh`, `make-skip-state.sh` and kit notes |
+| `0003-input-remap-hook.patch` | Patch for ps2-web-recomp: weak hook that lets `input/` remap the controller |
+| `input/` | Controller remap layer (`PS2_INPUT_MAP` parser + SDL apply) and its unit test |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 
 ## License
