@@ -33,8 +33,11 @@ if on large_model && [ -z "$_m" ] && [ -d "$VOSK_DIR/vosk-model-en-us-0.22" ]; t
 on widescreen    && : "${PS2_WIDESCREEN:=1}"                            # item 7 (reserved)
 on faster_loads  && : "${PS2_FAST_LOADS:=1}"                            # item 8 (reserved)
 [ -z "${PS2_VU_FAST+x}" ] && on vu_fast && PS2_VU_FAST=1              # item 9 (works; 0006 patch). Set-but-empty stays off; only unset + config on enables it.
-# item 10: button icons. ps2 (default) = original glyphs and the texture hook stays off; xbox / deck = icons/<pack>
-ic=$(cfg qol button_icons); case "$ic" in xbox|deck) [ -d "$HERE/icons/$ic" ] && : "${PS2_ICON_PACK:=$HERE/icons/$ic}";; esac
+# item 10: button icons. ps2 (default) = original glyphs and the texture hook stays off; other names: icons.local/<name>
+# (user packs, kept across builds) first, then the shipped icons/<name>. An empty PS2_ICON_PACK= is filled like an unset one.
+ic=$(cfg qol button_icons)
+case "$ic" in ""|ps2|*[!A-Za-z0-9_-]*) ;; *)
+  for d in "$HERE/icons.local/$ic" "$HERE/icons/$ic"; do [ -f "$d/icons.txt" ] && { : "${PS2_ICON_PACK:=$d}"; break; }; done;; esac
 [ "$(cfg launch voice_off)" = 1 ] && : "${PS2_VOICE_OFF:=1}"
 # Controller bindings + hotkeys: [bindings] -> PS2_INPUT_MAP="circle=b,paddle1;lx=leftx;hk_quit=back&start@1500;..." (read by ourcode/input in ps2run)
 if [ -f "$CFG" ] && [ -z "${PS2_INPUT_MAP+x}" ]; then

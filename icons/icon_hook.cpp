@@ -1,5 +1,6 @@
 // Lifeline Recomp: runner side of the icon packs (texture upload hook from patch 0008).
-//   PS2_ICON_PACK=<dir>   patch uploads listed in <dir>/icons.txt (run.sh sets it from [qol] button_icons)
+//   PS2_ICON_PACK=<dir>   patch uploads listed in <dir>/icons.txt (run.sh sets it from [qol] button_icons;
+//                         an empty PS2_ICON_PACK= does not override the config there: set button_icons = ps2)
 //   PS2_TEX_DUMP=<dir>    write every new small upload to <dir> (authoring; game-derived, never share)
 // Both unset: lifeline_gs_upload_enabled() is false and the runner never gathers or hashes anything.
 #include "icon_pack.hpp"
@@ -39,7 +40,13 @@ Hook &hook() { static Hook h; return h; }
 }  // namespace
 
 extern "C" bool lifeline_gs_upload_enabled() { return hook().on; }
-extern "C" bool lifeline_gs_upload_wanted(std::uint32_t psm, std::uint32_t w, std::uint32_t h) { return wanted(psm, w, h); }
+// Dumping looks at every small upload; with only a pack, just the (psm, w, h) shapes its manifest lists are gathered
+// and hashed (everything else goes straight to the GS, unhashed).
+extern "C" bool lifeline_gs_upload_wanted(std::uint32_t psm, std::uint32_t w, std::uint32_t h) {
+    const Hook &k = hook();
+    if (!k.dump_dir.empty()) return wanted(psm, w, h);
+    return k.pack.wants(psm, w, h);
+}
 
 extern "C" void lifeline_gs_upload(std::uint32_t psm, std::uint32_t w, std::uint32_t h, std::uint8_t *data, std::size_t bytes) {
     Hook &k = hook();
@@ -49,7 +56,7 @@ extern "C" void lifeline_gs_upload(std::uint32_t psm, std::uint32_t w, std::uint
         std::ofstream(k.dump_dir + "/uploads.txt", std::ios::app) << hex(id) << " " << w << "x" << h << " " << psm_name(psm) << "\n";
     }
     const auto it = k.pack.patches.find(id);
-    if (it == k.pack.patches.end()) return;
+    if (it == k.pack.patches.end()) return;   // a listed shape, but not one of our textures
     for (const Patch &p : it->second)
         if (!apply(p, psm, w, h, data, bytes)) std::fprintf(stderr, "[icons] %s does not fit %s (%ux%u %s)\n", p.file.c_str(), hex(id).c_str(), w, h, psm_name(psm));
     if (++k.patched <= 20) std::fprintf(stderr, "[icons] patched %s\n", hex(id).c_str());

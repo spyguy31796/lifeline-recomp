@@ -71,20 +71,33 @@ bool load_image(const std::string &path, Image &out, std::string &err) {
     return true;
 }
 
-bool parse_manifest_line(const std::string &line0, std::uint64_t &hash, std::uint32_t &x, std::uint32_t &y, std::string &file, std::string &err) {
+bool psm_from_name(const std::string &n, std::uint32_t &psm) {
+    for (std::uint32_t v : {kCT32, kCT24, kCT16, kCT16S, kT8, kT4})
+        if (n == psm_name(v)) { psm = v; return true; }
+    return false;
+}
+
+bool parse_manifest_line(const std::string &line0, ManifestLine &o, std::string &err) {
+    o = ManifestLine{};
     std::string line = line0.substr(0, line0.find('#'));
     std::istringstream in(line);
-    std::string hs;
-    if (!(in >> hs)) { file.clear(); return true; }   // blank / comment
+    std::string hs, ps, wh;
+    if (!(in >> hs)) return true;   // blank / comment
+    auto bad = [&](const std::string &why) {
+        err = "bad manifest line '" + line0 + "' (" + why + "; want: <16 hex> <psm> <w>x<h> <x> <y> <icon file>)"; o.file.clear(); return false;
+    };
     long long xx = -1, yy = -1;
-    if (hs.size() != 16 || hs.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos || !(in >> xx >> yy >> file) ||
-        xx < 0 || yy < 0 || xx >= kMaxSide || yy >= kMaxSide) {
-        err = "bad manifest line '" + line0 + "' (want: <16 hex> <x> <y> <icon file>)"; file.clear(); return false;
-    }
+    if (hs.size() != 16 || hs.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) return bad("hash");
+    if (!(in >> ps >> wh >> xx >> yy >> o.file)) return bad("missing field");
+    if (!psm_from_name(ps, o.shape.psm)) return bad("unknown psm '" + ps + "'");
+    unsigned w = 0, h = 0; char xch = 0, extra_c = 0;
+    if (std::sscanf(wh.c_str(), "%u%c%u%c", &w, &xch, &h, &extra_c) != 3 || xch != 'x' || !wanted(o.shape.psm, w, h)) return bad("size '" + wh + "'");
+    o.shape.w = w; o.shape.h = h;
+    if (xx < 0 || yy < 0 || xx >= w || yy >= h) return bad("x/y outside the texture");
     std::string extra;
-    if (in >> extra) { err = "extra text in manifest line '" + line0 + "'"; file.clear(); return false; }
-    if (file.find("..") != std::string::npos || file[0] == '/') { err = "icon path must stay in the pack: " + file; file.clear(); return false; }
-    hash = std::stoull(hs, nullptr, 16); x = static_cast<std::uint32_t>(xx); y = static_cast<std::uint32_t>(yy);
+    if (in >> extra) return bad("extra text");
+    if (o.file.find("..") != std::string::npos || o.file[0] == '/') { err = "icon path must stay in the pack: " + o.file; o.file.clear(); return false; }
+    o.hash = std::stoull(hs, nullptr, 16); o.x = static_cast<std::uint32_t>(xx); o.y = static_cast<std::uint32_t>(yy);
     return true;
 }
 
@@ -93,16 +106,18 @@ bool load_pack(const std::string &dir, Pack &out, std::string &err) {
     if (!f) { err = "no " + dir + "/icons.txt"; return false; }
     std::map<std::string, Image> cache;
     for (std::string line; std::getline(f, line);) {
-        std::uint64_t h = 0; std::uint32_t x = 0, y = 0; std::string file, e;
-        if (!parse_manifest_line(line, h, x, y, file, e)) { err += e + "; "; continue; }
-        if (file.empty()) continue;
-        auto it = cache.find(file);
+        ManifestLine m; std::string e;
+        if (!parse_manifest_line(line, m, e)) { err += e + "; "; continue; }
+        if (m.file.empty()) continue;
+        auto it = cache.find(m.file);
         if (it == cache.end()) {
             Image im;
-            if (!load_image(dir + "/" + file, im, e)) { err += e + "; "; continue; }
-            it = cache.emplace(file, std::move(im)).first;
+            if (!load_image(dir + "/" + m.file, im, e)) { err += e + "; "; continue; }
+            it = cache.emplace(m.file, std::move(im)).first;
         }
-        out.patches[h].push_back(Patch{x, y, it->second, file});
+        if (m.x + it->second.w > m.shape.w || m.y + it->second.h > m.shape.h) { err += m.file + " does not fit " + hex(m.hash) + "; "; continue; }
+        out.patches[m.hash].push_back(Patch{m.x, m.y, it->second, m.file});
+        out.shapes.insert(m.shape);
     }
     return true;
 }
@@ -146,7 +161,7 @@ bool dump(const std::string &dir, std::uint64_t hash, std::uint32_t psm, std::ui
     if (indexed(psm)) {
         f << "P5\n" << w << " " << h << "\n255\n";
         for (std::size_t i = 0; i < static_cast<std::size_t>(w) * h; ++i)
-            f.put(static_cast<char>(psm == kT8 ? d[i] : ((d[i / 2] >> ((i & 1) * 4)) & 15u) * 17));   // T4 stretched to 0..255 for viewing
+            f.put(static_cast<char>(psm == kT8 ? d[i] : (d[i / 2] >> ((i & 1) * 4)) & 15u));   // raw palette indices (T4: 0-15, so it looks dark)
     } else {
         f << "P7\nWIDTH " << w << "\nHEIGHT " << h << "\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n";
         for (std::size_t i = 0; i < static_cast<std::size_t>(w) * h; ++i) {

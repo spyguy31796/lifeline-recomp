@@ -1,6 +1,6 @@
 # Button icon packs
 
-Swaps the PS2 button glyphs the game draws (○ □ ✕ △) for Xbox or Steam Deck ones. Choose a pack in
+Swaps the PS2 button glyphs the game draws (Circle, Square, Cross, Triangle) for Xbox or Steam Deck ones. Choose a pack in
 Launcher → QoL → **9 Button icons** (`[qol] button_icons = ps2 | xbox | deck`). `run.sh` then sets
 `PS2_ICON_PACK=<install>/icons/<pack>`. `ps2` (the default) leaves the texture hook fully off.
 
@@ -12,7 +12,8 @@ buttons, the icons don't follow.
   texture uploads. The hook is off unless a pack with entries or `PS2_TEX_DUMP` is set. When it's on, only uploads that
   could be a glyph are gathered and hashed (PSMCT32/24/16 or PSMT8/4, 8–256 px per side, see `wanted()`). Everything else
   goes straight through, as upstream.
-- Each pack's `icons.txt` lists `<upload hash> <x> <y> <icon file>`. A matching upload has the icon drawn into it before
+- Each pack's `icons.txt` lists `<upload hash> <psm> <w>x<h> <x> <y> <icon file>`. With only a pack set, the hook
+  gathers and hashes just the uploads whose (psm, w, h) the manifest lists; everything else is never hashed. A matching upload has the icon drawn into it before
   the GS sees it. Paletted textures take a PGM of palette indices: 0 = transparent, 255 = keep the original pixel. The
   game's own palette colours the icon, so B stays the circle's red, X the square's pink and A the cross's blue.
 - The hashes are FNV-1a over the upload. They identify a texture on the disc but contain no pixels, so the manifests are
@@ -22,17 +23,32 @@ buttons, the icons don't follow.
   this project (CC0).
 
 ## Coverage (found on the box, 2026-10-14)
-| Screen | Texture (hash) | Glyphs |
+Described by screen and button name only; no game text is kept in this repo.
+
+| Screen | Texture (hash, format) | Glyphs |
 |---|---|---|
-| Title → OPTION menu footer ("○ OR □ : OK") | `60a3b833bf197925` 256×64 PSMT8 | ○ (7,5) 23×22, □ (63,6) 20×20 |
-| Title → OPTION menu footer ("✕ : CANCEL") | `46c00b69fddee84f` 256×64 PSMT8 | ✕ (9,7) 18×18 |
+| Title → OPTION menu footer | `60a3b833bf197925` 256×64 t8 | Circle (7,5) 23×22, Square (63,6) 20×20 |
+| Title → OPTION menu footer | `46c00b69fddee84f` 256×64 t8 | Cross (9,7) 18×18 |
 
 Other screens that show glyphs (key configuration pages, in-game item and keyword menus, battle prompts) build the same
-kind of footer texture with different text, so they have different hashes. They aren't covered yet: reach the screen,
-dump, and add lines (below).
+kind of footer texture with different contents, so they have different hashes. They aren't covered yet: reach the
+screen, dump, and add lines (below).
+
+## Your own packs
+`build.sh` replaces `<install>/icons/` with the shipped packs on every Install / update, so don't edit it. Put your own
+pack in `<install>/icons.local/<name>/` (an `icons.txt` plus its icon files); build.sh never touches `icons.local/`.
+Select it with `button_icons = <name>` under `[qol]` in `config.ini` (letters, digits, `-` and `_`). The launcher's list
+only offers ps2 / xbox / deck and shows another name as ps2, but leaves it as is unless you change item 9. A name in
+`icons.local/` wins over a shipped pack of the same name.
+
+`PS2_ICON_PACK=<dir>` in the environment overrides the config. An **empty** `PS2_ICON_PACK=` does not: run.sh fills an
+empty value from the config like an unset one. To turn icons off, set `button_icons = ps2`.
 
 ## Adding a screen
 1. `PS2_TEX_DUMP=$PWD/tex-dump ./run.sh` (or ps2run with `--press` scripting), then open the screen.
-2. Find the texture in `tex-dump/uploads.txt` and the `.pgm`/`.pam` files (paletted dumps show raw indices as grey).
-3. Note the glyph's bounding box and the palette index it uses. Add it to `GLYPHS` in `tools/make_packs.py`, run
+2. Find the texture in `tex-dump/uploads.txt` (`<hash> <w>x<h> <psm>`) and its `.pgm`/`.pam` file. Paletted dumps
+   hold the raw palette indices, the same values a pack's PGM uses (t4: 0-15, so they look almost black; stretch the
+   levels in a viewer).
+3. Note the glyph's bounding box and the palette index it uses. Add it to `GLYPHS` in `tools/make_packs.py` with the
+   psm and size from uploads.txt and a button-name description (no game text), run
    the script, and test with `PS2_ICON_PACK=$PWD/icons/xbox`. The log shows `[icons] patched <hash>`.

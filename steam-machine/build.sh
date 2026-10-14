@@ -179,6 +179,6 @@ PS2_VOICE_VOSK_LIB="$VOSK_DIR/vosk/libvosk.so"
 PS2_VOICE_ASSETS="$ASSETS"
 ENV
 install -m755 "$KIT/run.sh" "$WORK/run.sh"
-rm -rf "$WORK/icons.new"; cp -r "$OURCODE/icons/packs" "$WORK/icons.new" && rm -rf "$WORK/icons" && mv "$WORK/icons.new" "$WORK/icons"   # button icon packs (our art)
+rm -rf "$WORK/icons.new"; cp -r "$OURCODE/icons/packs" "$WORK/icons.new" && rm -rf "$WORK/icons" && mv "$WORK/icons.new" "$WORK/icons"   # shipped icon packs (our art); user packs live in icons.local/, never touched
 echo "== [time] total: $((SECONDS-T0))s" | tee -a "$PROG"
 echo "== built. Launch with: $WORK/run.sh   (game-derived build; keep it on this machine)"
