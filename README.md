@@ -241,7 +241,19 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
   If the tuned build fails (for example an LTO/linker error), it rebuilds generic and records `generic-fallback`;
   without `ld.lld` it uses `-march` only. The flavor actually built is in `~/lifeline-recomp/build-flavor`, and the
   flags plus flavor are written to `build.log`, `build-progress.log` and the launcher's `logs/install-*.log`.
-- A `-march=native` binary only runs on the CPU it was built for (or a newer one); rebuild if you move the install.
+- **Warning: `-march=native` binaries are tied to the CPU they were built on.** Copied to another machine (or a
+  different Steam Machine / handheld model), they may crash at start with "Illegal instruction". Don't share or
+  copy a tuned `ps2run`; rebuild on each machine. `build-flavor` records the CPU model (`cpu=...`), and when a
+  tuned build finds a different CPU the launcher prompts at start and shows `ON (rebuild: new CPU)` until
+  Install / update rebuilds it. Generic builds run anywhere and never prompt.
+- `CPU_MARCH` (env for `build.sh`) replaces `native` with a fixed target, e.g. `CPU_MARCH=znver2`. Pick one that
+  every machine you run on supports (too new = illegal instruction; `x86-64-v3` is a safe AVX2 baseline); the
+  launcher doesn't set it, and the CPU check above still applies to the machine that built it.
+- Every configure (before `port.sh` and the final one) passes the same `-DCMAKE_CXX_FLAGS` /
+  `-DCMAKE_EXE_LINKER_FLAGS`, so switching flavor recompiles once and stale cached flags (e.g. `-fuse-ld=lld` after
+  lld was removed) are replaced before the first compile. If the tuned first compile fails anyway, the build falls
+  back to generic right there. The first install into a new build dir compiles twice when tuned (`port.sh`
+  configures it without our flags).
 - Expected gain is modest; see the PR for measured numbers. Hot spots on the Steam Machine are the interpreted VU1
   microcode and the EE thread waiting on it, which a compiler flag can only speed up a little.
 - Logic in `steam-machine/cpu_flags.sh`; tests: `bash steam-machine/tests/test_cpu_flags.sh`,

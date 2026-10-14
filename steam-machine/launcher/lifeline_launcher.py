@@ -75,10 +75,38 @@ def play_env(c):
     return e
 
 
+def _flavor_lines():
+    try: return open(os.path.join(WORK, "build-flavor")).read().splitlines()
+    except OSError: return []
+
+
 def built_flavor():
     """Flavor of the installed ps2run as written by build.sh (cpu_tuned | generic | generic-fallback), or None."""
-    try: return open(os.path.join(WORK, "build-flavor")).read().strip() or None
+    lines = _flavor_lines()
+    return (lines[0].strip() or None) if lines else None
+
+
+def built_cpu():
+    """CPU model the installed build was made on ('cpu=' line of build-flavor), or None (older builds)."""
+    return next((l[4:].strip() for l in _flavor_lines() if l.startswith("cpu=")), None) or None
+
+
+def current_cpu():
+    try:
+        with open(os.environ.get("LIFELINE_CPUINFO", "/proc/cpuinfo")) as f:
+            return next((l.split(":", 1)[1].strip() for l in f if l.startswith("model name")), None)
     except OSError: return None
+
+
+def cpu_change_msg():
+    return "CPU changed (%s -> %s): run Install / update to rebuild the CPU-tuned build" % (built_cpu(), current_cpu())
+
+
+def cpu_changed():
+    """A CPU-tuned build made on another CPU model: -march=native code may not run here (illegal instruction)."""
+    if built_flavor() != "cpu_tuned": return False
+    have, now = built_cpu(), current_cpu()
+    return bool(have and now and have != now)
 
 
 def wanted_flavor(c):
@@ -90,7 +118,7 @@ def rebuild_pending(c):
     if not os.path.isfile(os.path.join(WORK, "lifeline.env")): return False
     have = built_flavor() or "generic"          # builds made before this option were generic
     if have == "generic-fallback": have = "generic" if wanted_flavor(c) == "generic" else "fallback"
-    return have != wanted_flavor(c)
+    return have != wanted_flavor(c) or cpu_changed()
 
 
 def build_env(c):
@@ -298,7 +326,8 @@ def value_of(c, key):
         return c.get("qol", k) + "x"
     if key.startswith("build:"):
         v = "ON" if c.getboolean("build", key[6:]) else "off"
-        if rebuild_pending(c): v += " (rebuild)"
+        if key == "build:cpu_tuned" and cpu_changed(): v += " (rebuild: new CPU)"
+        elif rebuild_pending(c): v += " (rebuild)"
         elif key == "build:cpu_tuned" and built_flavor() == "generic-fallback": v += " (fell back)"
         return v
     if key == "bindings": return "custom" if c.has_section("bindings") else "default"
@@ -340,6 +369,8 @@ def run_ui():
     def font(sz): return pygame.font.Font(None, sz)
     F, S, T = font(40), font(28), font(64)
     c, sel, job, msg, clock, rep = load(), 0, None, "", pygame.time.Clock(), 0
+    if cpu_changed():   # prompt once at start: the tuned build was made for another CPU
+        msg = cpu_change_msg()
     def act(name):
         nonlocal job, msg, sel
         items = menu_items(c); key, _, en = items[sel]

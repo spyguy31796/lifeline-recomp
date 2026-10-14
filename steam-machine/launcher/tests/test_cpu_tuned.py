@@ -30,6 +30,21 @@ open(os.path.join(work, "build-flavor"), "w").write("generic-fallback\n")
 check(L.rebuild_pending(c) and "rebuild" in L.value_of(c, "build:cpu_tuned"), "fallback while on -> still pending (retry on next install)")
 L.activate(c, "build:cpu_tuned")
 check(not L.rebuild_pending(c), "fallback build counts as generic when off")
+# CPU model in build-flavor: a tuned build from another CPU asks for a rebuild
+L.activate(c, "build:cpu_tuned")   # on again
+cpuinfo = os.path.join(root, "cpuinfo"); open(cpuinfo, "w").write("processor\t: 0\nmodel name\t: CPU A\n")
+os.environ["LIFELINE_CPUINFO"] = cpuinfo
+open(os.path.join(work, "build-flavor"), "w").write("cpu_tuned\ncpu=CPU A\n")
+check(L.built_flavor() == "cpu_tuned" and L.built_cpu() == "CPU A" and L.current_cpu() == "CPU A", "flavor + cpu read")
+check(not L.cpu_changed() and not L.rebuild_pending(c) and L.value_of(c, "build:cpu_tuned") == "ON", "same CPU: nothing pending")
+open(cpuinfo, "w").write("model name\t: CPU B\n")
+check(L.cpu_changed() and L.rebuild_pending(c), "other CPU: rebuild pending")
+check(L.value_of(c, "build:cpu_tuned") == "ON (rebuild: new CPU)" and "CPU A -> CPU B" in L.cpu_change_msg(), "prompt names both CPUs")
+open(os.path.join(work, "build-flavor"), "w").write("cpu_tuned\n")
+check(not L.cpu_changed(), "older build-flavor without cpu= line: no prompt")
+open(os.path.join(work, "build-flavor"), "w").write("generic\ncpu=CPU A\n"); L.activate(c, "build:cpu_tuned")
+check(not L.cpu_changed() and not L.rebuild_pending(c), "generic builds run anywhere: no prompt")
+del os.environ["LIFELINE_CPUINFO"]
 check(L.main(["--set", "build.cpu_tuned=1"]) == 0 and L.load().get("build", "cpu_tuned") == "1", "--set build.cpu_tuned works")
 
 # install passes CPU_TUNED to build.sh and logs flags + built flavor

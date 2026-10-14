@@ -60,10 +60,15 @@ V="$OURCODE/voice"
 # every .cpp in voice/ and input/ (Vosk is dlopen'ed at run time, so no build-time libvosk)
 VOICE_SRCS=$(printf '%s;' "$V"/*.cpp "$OURCODE"/input/*.cpp); VOICE_SRCS=${VOICE_SRCS%;}   # + controller remap layer
 GAME="$SRC/games/$NAME"; GEN="$SRC/generated/$NAME"; NAT="$SRC/build/native-$NAME"
+# shellcheck source=steam-machine/cpu_flags.sh
+. "$KIT/cpu_flags.sh"
+cpu_flags   # decided once: every configure below passes the same compiler/linker flags
 configure() {
+  cpu_cmake_args
   cmake -S "$SRC" -B "$NAT" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
-      -DPS2_GENERATED="$GEN" -DPS2_EXTRA_SOURCES="$VOICE_SRCS" >/dev/null
+      -DPS2_GENERATED="$GEN" -DPS2_EXTRA_SOURCES="$VOICE_SRCS" "${CPU_CMAKE_ARGS[@]}" >/dev/null
 }
+configure_existing() { [ ! -f "$NAT/build.ninja" ] || configure; }
 # Keep a working game if any compile/link below fails: back up ps2run, put it back unless we finish.
 BUILD_OK=""
 # A ps2run.prev left behind means an earlier run was killed (SIGKILL skips the restore below): it is the
@@ -76,11 +81,13 @@ keep_old_ps2run() {
   fi
 }
 trap keep_old_ps2run EXIT
-# An existing build dir has the source list of the previous kit: refresh it before port.sh compiles,
-# so new files (e.g. input/*.cpp) are part of the first link.
-[ -f "$NAT/build.ninja" ] && configure
+# An existing build dir has the source list and flags of the previous build: refresh both before port.sh
+# compiles, so new files (e.g. input/*.cpp) are linked, a flavor switch compiles once, and stale cached flags
+# (e.g. -fuse-ld=lld with lld gone) can't fail the first compile. port.sh (upstream) configures a new build
+# dir itself without our flags, so the very first install of a tuned build compiles twice.
+configure_existing
 # shellcheck disable=SC2086
-"$SRC/scripts/port.sh" "$NAME" "$ISO" --native-only ${PORT_ARGS:---no-explore}
+port_with_fallback configure_existing "$SRC/scripts/port.sh" "$NAME" "$ISO" --native-only ${PORT_ARGS:---no-explore}
 phase "port.sh (tools+translate+first compile)"
 
 # --- Re-translate with the voice overrides, relink with the voice module ------
@@ -89,8 +96,6 @@ mods=(); [ -d "$GAME/modules" ] && mods=(--modules "$GAME/modules")
 "$SRC/build/tools/eerecomp" "$ELF" --entries "$GAME/entries.txt" "${mods[@]}" \
     --overrides "$V/overrides.txt" --out "$GEN" | tail -1
 phase "re-translate with overrides"
-# shellcheck source=cpu_flags.sh
-. "$KIT/cpu_flags.sh"
 FLAVOR_FILE="$WORK/build-flavor" build_native "$SRC" "$NAT" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
     -DPS2_GENERATED="$GEN" -DPS2_EXTRA_SOURCES="$VOICE_SRCS" || exit 1
 BUILD_OK=1; rm -f "$NAT/ps2run.prev"
