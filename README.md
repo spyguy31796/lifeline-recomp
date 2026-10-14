@@ -227,6 +227,26 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 - From `0004-audio-buffer-and-perf-log.patch` (`host/audio_pacing.hpp` + `host/window.cpp`; unit test in
   `tests/test_audio_pacing.cpp`); `build.sh` applies it (also to existing checkouts).
 
+### CPU-tuned build (optional, rebuild)
+- Launcher item **CPU-tuned build (rebuild)**, `config.ini`:
+  ```ini
+  [build]
+  cpu_tuned = 1      # default 0
+  ```
+  or `lifeline_launcher.py --set build.cpu_tuned=1`.
+- It changes the compiled binary, so it only takes effect on the next **Install / update**. The launcher shows
+  `ON (rebuild)` / `off (rebuild)` and a hint until the build matches the setting.
+- When on, `build.sh` (env `CPU_TUNED=1`) compiles with `-march=native -flto=thin` and links with `-fuse-ld=lld`
+  (ThinLTO, tuned for this machine's CPU; `CPU_MARCH=znver4` etc. overrides `native`). PGO is not used.
+  If the tuned build fails (for example an LTO/linker error), it rebuilds generic and records `generic-fallback`;
+  without `ld.lld` it uses `-march` only. The flavor actually built is in `~/lifeline-recomp/build-flavor`, and the
+  flags plus flavor are written to `build.log`, `build-progress.log` and the launcher's `logs/install-*.log`.
+- A `-march=native` binary only runs on the CPU it was built for (or a newer one); rebuild if you move the install.
+- Expected gain is modest; see the PR for measured numbers. Hot spots on the Steam Machine are the interpreted VU1
+  microcode and the EE thread waiting on it, which a compiler flag can only speed up a little.
+- Logic in `steam-machine/cpu_flags.sh`; tests: `bash steam-machine/tests/test_cpu_flags.sh`,
+  `python3 steam-machine/launcher/tests/test_cpu_tuned.py`.
+
 ## Known limits
 - Accuracy depends on the small Vosk model and your mic. Natural-sentence matching was tuned with synthetic voices plus one player's sessions.
 - A misheard word can still map to a different command that's valid in the current room.
@@ -269,6 +289,7 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `0005-hotkeys-and-clean-quit.patch` | Patch for ps2-web-recomp: hotkey hook (fullscreen, hold-to-quit), card save and audio drain on exit |
 | `input/` | Controller remap layer and hotkeys (`PS2_INPUT_MAP` parser, chord/hold state, SDL apply) and their unit tests |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
+| `steam-machine/cpu_flags.sh` | CPU-tuned build flags (`[build] cpu_tuned`) with generic fallback; test in `steam-machine/tests/` |
 
 ## License
 Our code is MIT (see `LICENSE`). ps2-web-recomp is MIT and is not vendored: `build.sh` clones it and applies our patches.

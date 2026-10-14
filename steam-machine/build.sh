@@ -8,11 +8,12 @@
 #   env: KIT_NO_CONTAINER=1   build directly on the host (dev box / non-SteamOS)
 #        PORT_ARGS="..."      extra args for port.sh (default: --no-explore)
 #        SKIP_VOSK=1          don't fetch Vosk lib/model
+#        CPU_TUNED=1          -march=native + ThinLTO for this CPU (launcher: [build] cpu_tuned); falls back to generic
 set -euo pipefail
 T0=$SECONDS; TL=$SECONDS; phase() { local m="== [time $(date +%H:%M:%S)] $1: $((SECONDS-TL))s"; echo "$m"; echo "$m" >> "$PROG"; TL=$SECONDS; }
 KIT="$(cd "$(dirname "$0")" && pwd)"
 OURCODE="$(cd "$KIT/.." && pwd)"          # ourcode/: 0001, 0002, voice/
-case "${1:-}" in -h|--help) sed -n 2,12p "$0"; exit 0;; esac
+case "${1:-}" in -h|--help) sed -n 2,13p "$0"; exit 0;; esac
 ISO="$(realpath "${1:-${LIFELINE_ISO:-/home/deck/Downloads/Life Line (USA).iso}}")"
 WORK="$(realpath -m "${2:-${LIFELINE_WORK:-$HOME/lifeline-recomp}}")"
 mkdir -p "$WORK"; PROG="$WORK/build-progress.log"; echo "== [time $(date +%H:%M:%S)] start${KIT_IN_BOX:+ (in container)}" >> "$PROG"; exec > >(tee -a "$WORK/build.log") 2>&1; echo "== [time $(date +%H:%M:%S)] start ($(nproc) cores)"
@@ -27,13 +28,13 @@ IMAGE=${KIT_IMAGE:-quay.io/toolbx/arch-toolbox:latest}   # toolbox image: base p
 if [ -z "${KIT_NO_CONTAINER:-}" ] && [ ! -e /run/.containerenv ] && [ ! -e /.dockerenv ]; then
   command -v distrobox >/dev/null || { echo "distrobox not found (SteamOS 3.5+ ships it); or set KIT_NO_CONTAINER=1" >&2; exit 1; }
   distrobox list | grep -qw "$BOX" || { for i in 1 2 3; do distrobox create -Y -n "$BOX" -i "$IMAGE" && distrobox enter "$BOX" -- true && break; echo "container init failed (try $i), retrying" | tee -a "$PROG"; distrobox rm -f "$BOX" || true; sleep 20; done; }
-  exec distrobox enter "$BOX" -- env KIT_IN_BOX=1 PORT_ARGS="${PORT_ARGS:-}" SKIP_VOSK="${SKIP_VOSK:-}" bash "$0" "$ISO" "$WORK"
+  exec distrobox enter "$BOX" -- env KIT_IN_BOX=1 PORT_ARGS="${PORT_ARGS:-}" SKIP_VOSK="${SKIP_VOSK:-}" CPU_TUNED="${CPU_TUNED:-0}" CPU_MARCH="${CPU_MARCH:-}" bash "$0" "$ISO" "$WORK"
 fi
 
 # --- Dependencies (inside the container only) --------------------------------
 if [ -n "${KIT_IN_BOX:-}" ] && command -v pacman >/dev/null; then
   # rootless podman: "sudo" here is root only inside the container
-  for i in 1 2 3; do sudo pacman -Syu --disable-download-timeout --needed --noconfirm git cmake ninja clang python python-pip sdl2 libpulse pipewire vulkan-radeon vulkan-icd-loader curl unzip p7zip && break; sleep 15; done
+  for i in 1 2 3; do sudo pacman -Syu --disable-download-timeout --needed --noconfirm git cmake ninja clang python python-pip sdl2 libpulse pipewire vulkan-radeon vulkan-icd-loader lld curl unzip p7zip && break; sleep 15; done
 fi
 phase deps
 for t in git cmake ninja clang++ python3 curl unzip; do command -v $t >/dev/null || { echo "missing $t" >&2; exit 1; }; done
@@ -88,9 +89,12 @@ mods=(); [ -d "$GAME/modules" ] && mods=(--modules "$GAME/modules")
 "$SRC/build/tools/eerecomp" "$ELF" --entries "$GAME/entries.txt" "${mods[@]}" \
     --overrides "$V/overrides.txt" --out "$GEN" | tail -1
 phase "re-translate with overrides"
-configure
-ninja -C "$NAT" ps2run > "$NAT/ninja.log" 2>&1 || { tail -30 "$NAT/ninja.log"; exit 1; }
+# shellcheck source=cpu_flags.sh
+. "$KIT/cpu_flags.sh"
+FLAVOR_FILE="$WORK/build-flavor" build_native "$SRC" "$NAT" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
+    -DPS2_GENERATED="$GEN" -DPS2_EXTRA_SOURCES="$VOICE_SRCS" || exit 1
 BUILD_OK=1; rm -f "$NAT/ps2run.prev"
+echo "== [time $(date +%H:%M:%S)] build flavor: $(head -1 "$WORK/build-flavor")" >> "$PROG"
 
 phase "relink with voice module"
 # --- Vosk 0.3.45 + model (fetched on the device, never bundled; loaded at run time) ---

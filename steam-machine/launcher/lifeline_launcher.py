@@ -34,10 +34,14 @@ QOL = [
     ("widescreen",       "7 Native widescreen",         "bool", False, "True 16:9 with correct field of view"),
     ("faster_loads",     "8 Faster loads / skip FMV / 60fps", "bool", False, "Fast-forward loads, skip seen FMVs"),
 ]
+# [build] options change the compiled binary: they take effect on the next Install / update.
+BUILD = [("cpu_tuned", "CPU-tuned build (rebuild)",
+          "-march=native + LTO for this machine's CPU. Applied by Install / update (rebuild); generic if LTO fails")]
 LAUNCH = [("skip_tutorial", "Skip tutorial (needs saves/room001.state)"),
           ("fullscreen", "Fullscreen"), ("debug", "Debug logs"), ("voice_off", "Voice off (PS2_VOICE_OFF)")]
 DEFAULTS = {"launch": {"skip_tutorial": "0", "fullscreen": "1", "debug": "1", "voice_off": "0"},
             "qol": {k: ("1" if k == "resolution_scale" else "0") for k, *_ in QOL},
+            "build": {k: "0" for k, *_ in BUILD},
             "paths": {"iso": DEFAULT_ISO, "kit": os.path.dirname(HERE)}}
 
 
@@ -68,6 +72,30 @@ def play_cmd(c, new_game=False):
 def play_env(c):
     e = dict(os.environ)
     if c.getboolean("launch", "voice_off"): e.setdefault("PS2_VOICE_OFF", "1")   # exported env wins (as in run.sh)
+    return e
+
+
+def built_flavor():
+    """Flavor of the installed ps2run as written by build.sh (cpu_tuned | generic | generic-fallback), or None."""
+    try: return open(os.path.join(WORK, "build-flavor")).read().strip() or None
+    except OSError: return None
+
+
+def wanted_flavor(c):
+    return "cpu_tuned" if c.getboolean("build", "cpu_tuned") else "generic"
+
+
+def rebuild_pending(c):
+    """True when [build] settings differ from what is installed (only once something is installed)."""
+    if not os.path.isfile(os.path.join(WORK, "lifeline.env")): return False
+    have = built_flavor() or "generic"          # builds made before this option were generic
+    if have == "generic-fallback": have = "generic" if wanted_flavor(c) == "generic" else "fallback"
+    return have != wanted_flavor(c)
+
+
+def build_env(c):
+    e = dict(os.environ)
+    e["CPU_TUNED"] = "1" if c.getboolean("build", "cpu_tuned") else "0"
     return e
 
 
@@ -129,11 +157,11 @@ class Job:
         self.done = True
 
 
-def _stream(job, cmd, progress=None):
+def _stream(job, cmd, progress=None, env=None):
     """Run cmd with stderr merged into stdout. With a progress file, show its phase lines while
     running; on failure always show the last lines of the command's own output."""
     job.log("$ " + " ".join(shlex.quote(x) for x in cmd))
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", env=env)
     seen = len(open(progress, errors="replace").read().splitlines()) if progress and os.path.exists(progress) else 0
     out = []
     for line in p.stdout:
@@ -189,8 +217,14 @@ def install(job, c):
     try:
         prog = os.path.join(WORK, "build-progress.log")
         job.log("Building from your ISO (progress: build-progress.log, full: build.log)")
-        if not _stream(job, ["bash", os.path.join(kit, "build.sh"), iso, WORK], progress=prog):
+        env = build_env(c)
+        job.log("Build options: cpu_tuned=%s (CPU_TUNED=%s; flags: %s)" % (c.get("build", "cpu_tuned"), env["CPU_TUNED"],
+                "-march=native -flto=thin, linker -fuse-ld=lld" if env["CPU_TUNED"] == "1" else "generic"))
+        if not _stream(job, ["bash", os.path.join(kit, "build.sh"), iso, WORK], progress=prog, env=env):
             job.log("build.sh failed; full log: " + os.path.join(WORK, "build.log")); return False
+        fl = built_flavor()
+        job.log("Built flavor: %s" % (fl or "unknown"))
+        if fl == "generic-fallback": job.log("CPU-tuned build failed, fell back to generic (see build.log)")
         job.log("Building spoken-form aliases ...")
         tool = os.path.join(os.path.dirname(kit), "voice", "tools", "build_aliases.py")
         cmd = ["python3", tool, "--assets", os.path.join(WORK, "voice-assets"), "--model", os.path.join(WORK, "vosk", SMALL_MODEL)]
@@ -250,6 +284,7 @@ def menu_items(c):
     m = [("play", "PLAY (continue / memory card)", built), ("new", "New game", built)]
     m += [("launch:" + k, lbl, True) for k, lbl in LAUNCH]
     m += [("qol:" + k, lbl, avail) for k, lbl, kind, avail, _ in QOL]
+    m += [("build:" + k, lbl, True) for k, lbl, _ in BUILD]
     m += [("bindings", "Controller bindings", True), ("iso", "ISO", True), ("install", "Install / update from ISO", True),
           ("large", "Download large speech model (~1.8 GB)", True), ("quit", "Quit", True)]
     return m
@@ -261,6 +296,11 @@ def value_of(c, key):
         k = key[4:]; kind = next(q[2] for q in QOL if q[0] == k)
         if kind == "bool": return "ON" if c.get("qol", k) == "1" else "off"
         return c.get("qol", k) + "x"
+    if key.startswith("build:"):
+        v = "ON" if c.getboolean("build", key[6:]) else "off"
+        if rebuild_pending(c): v += " (rebuild)"
+        elif key == "build:cpu_tuned" and built_flavor() == "generic-fallback": v += " (fell back)"
+        return v
     if key == "bindings": return "custom" if c.has_section("bindings") else "default"
     if key == "iso": return os.path.basename(c.get("paths", "iso"))
     if key == "large": return "installed" if os.path.isdir(os.path.join(WORK, "vosk", LARGE_MODEL)) else ""
@@ -278,6 +318,8 @@ def activate(c, key, delta=1):
         else:
             vals = q[2][1]; i = vals.index(c.get("qol", k)) if c.get("qol", k) in vals else 0
             c.set("qol", k, vals[(i + delta) % len(vals)])
+    elif key.startswith("build:"):
+        k = key[6:]; c.set("build", k, "0" if c.getboolean("build", k) else "1")
     elif key == "iso":
         isos = find_isos(c); cur = c.get("paths", "iso")
         i = isos.index(cur) if cur in isos else -1
@@ -306,8 +348,10 @@ def run_ui():
             if name in ("a", "b"): job = None
             return
         if name == "b": return "quit"
-        if name in ("left", "right") and key.startswith(("qol:", "iso")):
-            activate(c, key, -1 if name == "left" else 1); return
+        if name in ("left", "right") and key.startswith(("qol:", "iso", "build:")):
+            activate(c, key, -1 if name == "left" else 1)
+            if key.startswith("build:") and rebuild_pending(c): msg = "Rebuild needed: run Install / update to apply"
+            return
         if name == "start": key, en = "play", items[0][2]
         if name != "a" and name != "start": return
         if not en:
@@ -324,6 +368,7 @@ def run_ui():
         elif key == "large": job = Job("Large speech model", lambda j: download_large(j, c))
         elif key == "quit": return "quit"
         else: activate(c, key)
+        if key.startswith("build:") and rebuild_pending(c): msg = "Rebuild needed: run Install / update to apply"
     while True:
         for e in pygame.event.get():
             r = None
@@ -383,7 +428,8 @@ def run_ui():
                 v = value_of(c, key) if en or not key.startswith("qol:") else "coming soon"
                 scr.blit(F.render(v, True, (120, 200, 255) if en else (110, 110, 110)), (W - 360, y))
             key = items[sel][0]
-            hint = next((q[4] for q in QOL if "qol:" + q[0] == key), "")
+            hint = next((q[4] for q in QOL if "qol:" + q[0] == key), "") or next((b[2] for b in BUILD if "build:" + b[0] == key), "")
+            if key == "install" and rebuild_pending(c): hint = "Build settings changed: Install / update rebuilds with them"
             scr.blit(S.render(msg or hint, True, (230, 200, 90)), (60, H - 90))
             scr.blit(S.render("D-pad: move   A: select   </>: change   START: play   B: quit", True, (140, 140, 140)), (60, H - 50))
         pygame.display.flip(); clock.tick(30)
