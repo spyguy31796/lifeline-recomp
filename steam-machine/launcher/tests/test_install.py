@@ -1,6 +1,6 @@
 """Install/update tests with a fake kit: runs install() from the INSTALLED launcher copy (as Steam does),
 checks the install log, failure reporting, and atomic alias writes. Run: python3 test_install.py"""
-import importlib, os, shutil, subprocess, sys, tempfile, time
+import importlib, os, shutil, subprocess, sys, tempfile, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__)); LAUNCHER = os.path.dirname(HERE); REPO = os.path.dirname(os.path.dirname(LAUNCHER))
 fails = 0
 def check(c, what):
@@ -59,27 +59,49 @@ j = run_install(work, kit, iso)
 check(j.ok and "Aliases step failed" in "\n".join(j.lines) and "exit 2" in open(j.log_path).read(), "alias failure logged, install still OK")
 shutil.rmtree(root)
 
-# 4) build_aliases write_atomic: a failing write leaves the old file intact
-sys.path.insert(0, os.path.join(REPO, "voice", "tools"))
+# 4) build_aliases write_atomic: a failing write leaves the old file intact and no temp files
 src = open(os.path.join(REPO, "voice", "tools", "build_aliases.py")).read()
 ns = {}; exec(compile(src.split("def main():")[0], "build_aliases.py", "exec"), ns)
 d = tempfile.mkdtemp(); p = os.path.join(d, "aliases.tsv"); open(p, "w").write("old\n")
-ns["write_atomic"](p, "new\n"); check(open(p).read() == "new\n" and not os.path.exists(p + ".tmp"), "atomic write replaces")
-real_open = open
-def bad_open(path, mode="r", *a, **k):
-    f = real_open(path, mode, *a, **k)
-    if path.endswith(".tmp"):
-        class F:
-            def __enter__(s): return s
-            def __exit__(s, *e): f.close()
-            def write(s, t): f.write(t[:2]); raise IOError("disk full")
-            def flush(s): pass
-            def fileno(s): return f.fileno()
-        return F()
-    return f
-ns["open"] = bad_open
-try: ns["write_atomic"](p, "newer content\n")
+ns["write_atomic"](p, "new\n"); check(open(p).read() == "new\n" and os.listdir(d) == ["aliases.tsv"], "atomic write replaces, no temp left")
+real_fdopen = os.fdopen
+class Half:
+    def __init__(s, f): s.f = f
+    def __enter__(s): return s
+    def __exit__(s, *e): s.f.close()
+    def write(s, t): s.f.write(t[:2]); raise IOError("disk full")
+    def flush(s): pass
+    def fileno(s): return s.f.fileno()
+os.fdopen = lambda fd, *a, **k: Half(real_fdopen(fd, *a, **k))
+try: ns["write_atomic"](p, "newer content\n"); check(False, "write error propagates")
 except IOError: pass
+finally: os.fdopen = real_fdopen
 check(open(p).read() == "new\n", "failed write leaves the previous aliases.tsv intact")
+check(os.listdir(d) == ["aliases.tsv"], "failed write cleans up its temp file")
 shutil.rmtree(d)
+
+# 5) launcher _write_atomic and _install_file clean up on failure; log names are unique
+os.environ["LIFELINE_WORK"] = tempfile.mkdtemp(); sys.path.insert(0, LAUNCHER)
+sys.modules.pop("lifeline_launcher", None); L = importlib.import_module("lifeline_launcher"); sys.path.pop(0)
+d = tempfile.mkdtemp(); p = os.path.join(d, "f"); open(p, "wb").write(b"old")
+os.fdopen = lambda fd, *a, **k: Half(real_fdopen(fd, *a, **k))
+try: L._write_atomic(p, b"newer"); check(False, "_write_atomic error propagates")
+except IOError: pass
+finally: os.fdopen = real_fdopen
+check(open(p, "rb").read() == b"old" and os.listdir(d) == ["f"], "_write_atomic failure keeps old file, no temp")
+real_replace = L.os.replace
+def bad_replace(a, b): raise OSError("rename failed")
+L.os.replace = bad_replace
+try: L._install_file(os.path.join(LAUNCHER, "bindings.py"), p); check(False, "_install_file error propagates")
+except OSError: pass
+finally: L.os.replace = real_replace
+check(open(p, "rb").read() == b"old" and os.listdir(d) == ["f"], "_install_file failure keeps old file, no temp")
+shutil.rmtree(d)
+jobs = []
+for _ in range(3):
+    j = L.Job.__new__(L.Job); j.title, j.lock, j._f = "t", threading.Lock(), None; j.open_log("install"); jobs.append(j)
+names = [j.log_path for j in jobs]
+check(len(set(names)) == 3, "install log names unique: %s" % names)
+for j in jobs: j._f.close()
+shutil.rmtree(os.environ["LIFELINE_WORK"])
 print("%d FAILED" % fails if fails else "all install tests passed"); sys.exit(1 if fails else 0)

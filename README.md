@@ -130,6 +130,11 @@ Keyboard works too (arrows, Enter, Esc).
 ```
 After an install it is also copied to `~/lifeline-recomp/launcher/launcher.sh`.
 
+**Rollout note (install fix):** launchers installed before this fix fail at the end of *Install / update* when started
+from `~/lifeline-recomp/launcher` (the Steam shortcut). Update once by running the kit's
+`~/lifeline-kit/steam-machine/launcher/launcher.sh` and choosing *Install / update*, or by copying the new
+`lifeline_launcher.py` into `~/lifeline-recomp/launcher/`. Each install writes `~/lifeline-recomp/logs/install-*.log`.
+
 **Add to Steam:** Desktop Mode → Steam → *Games → Add a Non-Steam Game* → *Browse* → `~/lifeline-recomp/launcher/launcher.sh`
 (or the kit copy) → Add, rename it "Lifeline". In Game Mode it opens fullscreen; PLAY starts `run.sh` with your settings and
 returns to the launcher if the game exits with an error.

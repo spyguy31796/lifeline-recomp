@@ -14,7 +14,7 @@ Tokens it cannot resolve are written to aliases.unresolved.txt next to it. Put y
 aliases.local.tsv (same two-column format, in the same folder); they override generated entries
 here and at run time. Uses espeak-ng (if installed) to compare pronunciations; otherwise spelling only.
 """
-import argparse, glob, os, re, shutil, struct, subprocess, sys
+import argparse, glob, os, re, shutil, struct, subprocess, sys, tempfile
 
 # ---- inputs -------------------------------------------------------------------------------
 def parse_vgp(b):
@@ -168,10 +168,15 @@ UNI = {}
 
 def write_atomic(path, text):
     """Write to a temp file in the same folder, then rename, so a crash never leaves a truncated file."""
-    tmp = path + '.tmp'
-    with open(tmp, 'w') as f:
-        f.write(text); f.flush(); os.fsync(f.fileno())
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or '.', prefix='.' + os.path.basename(path) + '.', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(text); f.flush(); os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

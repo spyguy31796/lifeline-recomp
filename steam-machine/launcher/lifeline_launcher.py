@@ -10,7 +10,7 @@ Headless helpers (no window):
   lifeline_launcher.py --set qol.resolution_scale=2 [--set ...]   edit config and exit
 Contains only our code; never bundles game data.
 """
-import argparse, configparser, hashlib, glob, os, shlex, subprocess, sys, threading, time, urllib.request, zipfile, shutil
+import argparse, configparser, hashlib, glob, os, shlex, subprocess, sys, tempfile, threading, time, urllib.request, zipfile, shutil
 
 HOME = os.path.expanduser("~")
 WORK = os.environ.get("LIFELINE_WORK", os.path.join(HOME, "lifeline-recomp"))
@@ -97,8 +97,12 @@ class Job:
     def open_log(self, kind):
         """Tee everything to ~/lifeline-recomp/logs/<kind>-YYYYMMDD-HHMMSS.log."""
         d = os.path.join(WORK, "logs"); os.makedirs(d, exist_ok=True)
-        self.log_path = os.path.join(d, "%s-%s.log" % (kind, time.strftime("%Y%m%d-%H%M%S")))
-        self._f = open(self.log_path, "a", buffering=1, errors="replace")
+        base = os.path.join(d, "%s-%s" % (kind, time.strftime("%Y%m%d-%H%M%S")))
+        self.log_path = base + ".log"
+        try: self._f = open(self.log_path, "x", buffering=1, errors="replace")
+        except FileExistsError:
+            self.log_path = "%s-%06d-%d.log" % (base, int(time.time() * 1e6) % 1000000, os.getpid())
+            self._f = open(self.log_path, "x", buffering=1, errors="replace")
         self._f.write("== %s  %s\n" % (self.title, time.strftime("%Y-%m-%d %H:%M:%S %z")))
 
     def file(self, s):   # log file only (full command output)
@@ -152,16 +156,27 @@ def _install_file(src, dst):
     """Copy src to dst atomically (tmp + rename). Skips when they are the same file, which is the
     case when Install/update runs from the installed launcher (~/lifeline-recomp/launcher)."""
     if os.path.exists(dst) and os.path.samefile(src, dst): return False
-    tmp = dst + ".tmp"
-    shutil.copy2(src, tmp)
-    os.replace(tmp, dst)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst) or ".", prefix="." + os.path.basename(dst) + ".", suffix=".tmp")
+    os.close(fd)
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
     return True
 
 
 def _write_atomic(path, data):
-    tmp = path + ".tmp"
-    with open(tmp, "wb") as f: f.write(data); f.flush(); os.fsync(f.fileno())
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix="." + os.path.basename(path) + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f: f.write(data); f.flush(); os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
 
 
 def install(job, c):
