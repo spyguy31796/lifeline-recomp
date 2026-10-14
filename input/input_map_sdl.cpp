@@ -160,6 +160,10 @@ std::string read_file(const std::string &p) {
     std::ifstream f(p); std::string s; std::getline(f, s); return s;
 }
 
+SlotResult slot_result(ps2::StateResult r) {
+    return r == ps2::StateResult::Ok ? SlotResult::Ok : r == ps2::StateResult::Failed ? SlotResult::Failed : SlotResult::Vetoed;
+}
+
 void request_slot(const SaveSlots &slots, SlotAction action, int slot) {
     ps2::StateRequest r;
     r.load = action == SlotAction::Load;
@@ -188,13 +192,15 @@ void request_slot(const SaveSlots &slots, SlotAction action, int slot) {
             }
             return true;
         };
-        r.after = [backup, voice, slot](bool ok) {
-            if (!ok) {   // a failed load can leave the machine half restored: go back to what was running
+        r.after = [backup, voice, slot](ps2::StateResult res) {
+            const LoadFollowUp f = after_load(slot_result(res));
+            if (res == ps2::StateResult::Vetoed) std::fprintf(stderr, "[slots] load slot %d refused; the game keeps running\n", slot);
+            if (f.restore_backup) {   // a failed load can leave the machine half restored: go back to what was running
                 std::fprintf(stderr, "[slots] load slot %d failed; restoring the game from before\n", slot);
                 if (!ps2::load_state(backup)) ps2::halt("save slot load failed and the previous game could not be restored");
             }
-            if (lifeline_voice_after_load) lifeline_voice_after_load(ok ? read_file(voice).c_str() : "");
-            if (ok) std::fprintf(stderr, "[slots] loaded slot %d\n", slot);
+            if (f.reset_voice && lifeline_voice_after_load) lifeline_voice_after_load(f.voice_from_slot ? read_file(voice).c_str() : "");
+            if (res == ps2::StateResult::Ok) std::fprintf(stderr, "[slots] loaded slot %d\n", slot);
             g_slot_busy = false;
         };
     } else {
@@ -205,7 +211,8 @@ void request_slot(const SaveSlots &slots, SlotAction action, int slot) {
             if (voice_busy()) { std::fprintf(stderr, "[slots] save slot %d skipped: voice busy\n", slot); return false; }
             return true;
         };
-        r.after = [tmp, final_path, voice, slot](bool ok) {
+        r.after = [tmp, final_path, voice, slot](ps2::StateResult res) {
+            const bool ok = res == ps2::StateResult::Ok;
             std::error_code e;
             if (ok) {
                 std::filesystem::rename(tmp, final_path, e);

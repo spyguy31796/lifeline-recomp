@@ -6,7 +6,7 @@
 set -uo pipefail
 RUN=${1:-$HOME/lifeline-recomp/run.sh}
 HERE_RUN=$(dirname "$RUN"); LOG=$(mktemp)
-rm -f "$HERE_RUN"/saves/slot[1-4].state "$HERE_RUN"/saves/slot[1-4].voice "$HERE_RUN"/saves/before-load.state
+rm -rf "$HERE_RUN"/saves/slot[1-4].state "$HERE_RUN"/saves/slot[1-4].voice "$HERE_RUN"/saves/before-load.state "$HERE_RUN"/saves/before-load.state.tmp
 export SDL_AUDIODRIVER=dummy PS2_SDL_RENDERER=1 PS2_SAVE_SLOTS=1
 "$RUN" >"$LOG" 2>&1 &
 pid=$!
@@ -22,6 +22,14 @@ xdotool key F6; sleep 0.5
 xdotool keydown F8; sleep 0.2; xdotool keyup F8; sleep 1   # tap: no load
 xdotool keydown F8; sleep 0.8; xdotool keyup F8; sleep 1   # slot 2 is empty
 for _ in 1 2 3; do xdotool key F6; sleep 0.4; done   # one press per frame poll
+# the before-load backup can't be written (its .tmp is a directory): the load must be refused, not attempted
+mkdir -p "$HERE_RUN/saves/before-load.state.tmp"
+xdotool keydown F8; sleep 0.8; xdotool keyup F8; sleep 3
+rm -rf "$HERE_RUN/saves/before-load.state.tmp"   # before() removes an empty one itself
+grep -q "\[slots\] load slot 1 refused" "$LOG" || { echo "FAIL: load not refused when the backup can't be kept"; fail=1; }
+grep -q "\[state\] loaded" "$LOG" && { echo "FAIL: a refused load still loaded"; fail=1; }
+grep -q "restoring the game from before" "$LOG" && { echo "FAIL: a refused load took the restore path"; fail=1; }
+kill -0 "$pid" 2>/dev/null || { echo "FAIL: game exited after the refused load"; fail=1; }
 xdotool keydown F8; sleep 0.8; xdotool keyup F8; sleep 4
 kill -0 "$pid" 2>/dev/null || { echo "FAIL: game exited after the load"; fail=1; }
 xdotool keydown Escape; sleep 1.4; xdotool keyup Escape
@@ -36,6 +44,6 @@ grep -q "\[slots\] loaded slot 1" "$LOG" || { echo "FAIL: slot 1 not loaded"; fa
 ls "$HERE_RUN"/saves/*.tmp >/dev/null 2>&1 && { echo "FAIL: .tmp left in saves/"; fail=1; }   # state, voice and backup are all renamed into place
 [ "${PS2_VOICE_OFF:-0}" = 1 ] || grep -q "\[voice\] .*state loaded" "$LOG" || { echo "FAIL: voice not reset after load"; fail=1; }
 [ "$rc" = 0 ] || { echo "FAIL: exit $rc"; fail=1; }
-grep -E "\[slots\]|\[state\]|\[voice\] .*state loaded|halted" "$LOG"
+grep -E "\[slots\]|\[ee\]|\[state\]|\[voice\] .*state loaded|halted" "$LOG"
 [ "$fail" = 0 ] && echo "save-slot smoke passed (exit $rc)"
 rm -f "$LOG"; exit "$fail"

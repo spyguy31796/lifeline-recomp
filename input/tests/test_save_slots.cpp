@@ -60,6 +60,15 @@ int main() {
         CHECK(hs.update(509, d, down) == 0);
         CHECK(hs.update(510, d, down) == SAVE);
     }
+    // after a load: a veto (voice busy at the re-check, backup not kept) restores nothing and leaves voice alone
+    {
+        LoadFollowUp v = after_load(SlotResult::Vetoed);
+        CHECK(!v.restore_backup && !v.reset_voice && !v.voice_from_slot);
+        LoadFollowUp f = after_load(SlotResult::Failed);
+        CHECK(f.restore_backup && f.reset_voice && !f.voice_from_slot);
+        LoadFollowUp o = after_load(SlotResult::Ok);
+        CHECK(!o.restore_backup && o.reset_voice && o.voice_from_slot);
+    }
     std::printf(fails ? "%d FAILED\n" : "save slots: all passed\n", fails);
     return fails != 0;
 }

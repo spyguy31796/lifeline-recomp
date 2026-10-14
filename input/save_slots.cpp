@@ -31,4 +31,13 @@ std::string save_dir(const char *env) {
     return d;
 }
 
+LoadFollowUp after_load(SlotResult r) {
+    LoadFollowUp f;
+    if (r == SlotResult::Vetoed) return f;
+    f.reset_voice = true;
+    f.restore_backup = r == SlotResult::Failed;
+    f.voice_from_slot = r == SlotResult::Ok;
+    return f;
+}
+
 }  // namespace lifeline_input

@@ -34,6 +34,17 @@ private:
     int slot_ = 1;
 };
 
+// Outcome of a queued save/load as the runner reports it (mirrors ps2::StateResult, patch 0007).
+enum class SlotResult { Ok, Failed, Vetoed };
+// What to do after a load: a veto (voice busy at the frame-boundary re-check, or the before-load backup could not
+// be kept) touched nothing, so it neither restores the backup nor resets voice; only an attempted load does.
+struct LoadFollowUp {
+    bool restore_backup = false;   // the load was attempted and failed: go back to before-load.state
+    bool reset_voice = false;      // call lifeline_voice_after_load
+    bool voice_from_slot = false;  // with slotN.voice's context (Ok) or an empty one (Failed)
+};
+LoadFollowUp after_load(SlotResult r);
+
 bool save_slots_enabled(const char *env);    // PS2_SAVE_SLOTS: "1" = on
 std::string save_dir(const char *env);       // PS2_SAVE_DIR, default "saves"
 

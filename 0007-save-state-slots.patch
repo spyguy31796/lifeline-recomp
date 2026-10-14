@@ -1,26 +1,28 @@
 diff --git a/runtime/include/ps2/system.hpp b/runtime/include/ps2/system.hpp
-index 0eb5552..e9c59ae 100644
+index 0eb5552..54e9acf 100644
 --- a/runtime/include/ps2/system.hpp
 +++ b/runtime/include/ps2/system.hpp
-@@ -75,6 +75,16 @@ void halt(const std::string &reason);
+@@ -75,6 +75,18 @@ void halt(const std::string &reason);
  bool save_state(const std::string &path);
  bool load_state(const std::string &path);
  bool load_state(const std::uint8_t *data, std::size_t size);
 +// Save or load a state while the game runs (any thread may call). It runs on the emulation thread right after
-+// the next vblank, the same point --save-state uses: before() may veto it (returns false), after(ok) always runs
-+// on the emulation thread afterwards. Returns false (and does nothing) while an earlier request is still pending.
++// the next vblank, the same point --save-state uses: before() may veto it (returns false), after(result) always
++// runs on the emulation thread afterwards: Vetoed (before() refused, nothing was saved or loaded), Failed (the
++// save/load was attempted and failed) or Ok. Returns false (and does nothing) while an earlier request is pending.
++enum class StateResult { Ok, Failed, Vetoed };
 +struct StateRequest {
 +    bool load = false;
 +    std::string path;
 +    std::function<bool()> before;
-+    std::function<void(bool ok)> after;
++    std::function<void(StateResult)> after;
 +};
 +bool request_state(StateRequest request);
  bool halted();
  std::uint64_t frame_count();
  
 diff --git a/runtime/src/system.cpp b/runtime/src/system.cpp
-index 466c9d7..2dde89d 100644
+index 466c9d7..489f3c5 100644
 --- a/runtime/src/system.cpp
 +++ b/runtime/src/system.cpp
 @@ -30,6 +30,8 @@
@@ -53,7 +55,7 @@ index 466c9d7..2dde89d 100644
      schedule(hw::kEventVblank, now() + frame_cycles(), vblank);
  }
  
-@@ -363,13 +370,37 @@ void boot(std::uint32_t entry, const std::vector<std::string> &args) {
+@@ -363,13 +370,38 @@ void boot(std::uint32_t entry, const std::vector<std::string> &args) {
      schedule(hw::kEventVblank, frame_cycles(), vblank);
  }
  
@@ -74,9 +76,10 @@ index 466c9d7..2dde89d 100644
 +        g_user_state_pending.store(false, std::memory_order_release);
 +    }
 +    if (!r) return;
-+    bool ok = !r->before || r->before();
-+    if (ok) ok = r->load ? load_state(r->path) : save_state(r->path);
-+    if (r->after) r->after(ok);
++    StateResult res = StateResult::Vetoed;
++    if (!r->before || r->before())
++        res = (r->load ? load_state(r->path) : save_state(r->path)) ? StateResult::Ok : StateResult::Failed;
++    if (r->after) r->after(res);
 +}
 +}
 +
