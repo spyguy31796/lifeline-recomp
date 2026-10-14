@@ -30,8 +30,8 @@ struct Source {
 };
 
 // kHkSave / kHkLoad / kHkSlot: save-state slots (only active with PS2_SAVE_SLOTS=1, see save_slots.hpp).
-enum Hotkey : int { kHkFullscreen, kHkQuit, kHkSave, kHkLoad, kHkSlot, kHotkeyCount };
-extern const char *const kHotkeyNames[kHotkeyCount];      // "hk_fullscreen", "hk_quit", "hk_save", "hk_load", "hk_slot"
+enum Hotkey : int { kHkFullscreen, kHkQuit, kHkSave, kHkLoad, kHkSlot, kHkFastForward, kHotkeyCount };
+extern const char *const kHotkeyNames[kHotkeyCount];      // "hk_fullscreen", "hk_quit", "hk_save", "hk_load", "hk_slot", "hk_ff" (held)
 extern const char *const kHotkeyDefaults[kHotkeyCount];
 constexpr int kMaxHoldMs = 10000, kMaxChordKeys = 4;
 

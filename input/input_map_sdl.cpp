@@ -136,11 +136,17 @@ std::uint16_t game_bits(SDL_GameController *pad, const Map &m, const Source &s) 
     return bits;
 }
 
+bool ff_enabled() {   // PS2_FAST_FORWARD=1 (launcher item 11), off by default
+    static const bool on = [] { const char *e = std::getenv("PS2_FAST_FORWARD"); return e && *e == '1'; }();
+    return on;
+}
+
 const Map &hotkey_map() {
     static const Map m = [] {
         const char *spec = std::getenv("PS2_INPUT_MAP");
-        if (!spec || !*spec) return default_map();   // no map: built-in pad table + default hotkeys
-        Map x; std::string err; parse_map(spec, x, err);   // errors are reported by map()
+        Map x = default_map();   // no map: built-in pad table + default hotkeys
+        if (spec && *spec) { std::string err; x = Map{}; parse_map(spec, x, err); }   // errors are reported by map()
+        if (!ff_enabled()) x.hk[kHkFastForward].clear();   // off: its keys stay ordinary keys
         return x;
     }();
     static const Map gated = [] {   // save-slot chords do nothing (and hold nothing back) unless PS2_SAVE_SLOTS=1
@@ -254,6 +260,16 @@ extern "C" int lifeline_hotkeys(SDL_GameController *pad, const Uint8 *keys, std:
     const bool talk_held = *buttons & (1u << kCircle);   // before chord masking: the game sees push-to-talk
     *buttons &= static_cast<std::uint16_t>(~state.mask(m, [&](const Source &s) { return game_bits(pad, m, s); }));
     *quit_progress = state.quit_progress();
+    if (ff_enabled()) {   // PS2_FAST_FORWARD unset: hk_ff is cleared and voice_busy() is never polled
+        static FastForward ff;
+        const bool was = ff.on();
+        FastForward::Why why;
+        const bool talk = (*buttons & (1u << kCircle)) != 0;   // after remap: the game's push-to-talk
+        const bool on = ff.update(state.held(kHkFastForward, m, [&](const Source &s) { return pressed(pad, keys, s, false) > 0; }), talk, voice_busy(), why);
+        if (why != FastForward::Why::None)
+            std::fprintf(stderr, "[hotkey] fast-forward %s: %s\n", was ? "released" : "refused", why == FastForward::Why::Talk ? "push-to-talk held" : "voice command in progress");
+        if (on != was) ps2::set_ff_active(on);
+    }
     if (fired & (1u << kHkFullscreen)) std::fprintf(stderr, "[hotkey] fullscreen\n");
     if (fired & (1u << kHkQuit)) std::fprintf(stderr, "[hotkey] quit\n");
     static_assert((1u << kHkFullscreen) == 1 && (1u << kHkQuit) == 2, "bits match host/window.cpp kHotkey*");
@@ -267,5 +283,5 @@ extern "C" int lifeline_hotkeys(SDL_GameController *pad, const Uint8 *keys, std:
         case SlotAction::None: break;
         }
     }
-    return static_cast<int>(fired & ((1u << kHkFullscreen) | (1u << kHkQuit)));   // the runner only knows these two
+    return static_cast<int>(fired & ((1u << kHkFullscreen) | (1u << kHkQuit)));   // the runner only knows these two; hk_ff is held, not fired
 }

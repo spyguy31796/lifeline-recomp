@@ -123,8 +123,16 @@ Keyboard works too (arrows, Enter, Esc).
 | 8 | Faster loads / skip FMV / 60fps | `faster_loads` | `PS2_FAST_LOADS=1` | coming soon |
 | 9 | Faster VU interpreter | `vu_fast` | `PS2_VU_FAST=1` | **works** (off by default; see below) |
 | 10 | Button icons (PS2 / Xbox / Steam Deck) | `button_icons` | `PS2_ICON_PACK=<dir>` | works for the OPTION menu (rebuild once); see `icons/README.md` |
+| 11 | Fast-forward (hold) | `fast_forward` | `PS2_FAST_FORWARD=1` | **works**, off by default (hold Tab / Select+R2, up to `PS2_FF_MAX` x, default 4) |
 
 "Coming soon" items are greyed out in the launcher; their variables are reserved and ignored by the current build.
+
+**Fast-forward (item 11, `[qol] fast_forward`, `PS2_FAST_FORWARD=1`, off by default).** Hold `hk_ff` (default Tab, or Select+R2; never
+circle) to run up to `PS2_FF_MAX` times real speed (default 4). While held the frame limiter and audio pacing are
+bypassed, the game's audio is dropped and the device is fed silence instead, and the starvation counter is frozen.
+FF seconds are logged as `[perf-ff]` and left out of `[perf]`. Letting go flushes the queue and re-primes it with
+silence. Holding circle (push-to-talk), or a voice command being recognized, refuses it or releases it, and it stays
+off until the chord is released and pressed again. `PS2_FAST_LOADS` stays reserved for faster loads / FMV skip.
 
 **Faster VU interpreter (`[qol] vu_fast`, default off).** From `0006-vu-fast-interpreter-and-check.patch`.
 On the Steam Machine the VU1 thread is the bottleneck in 3D scenes. This option makes the runner use a faster VU1
@@ -254,7 +262,7 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
 - Rebind them in Launcher → Controller bindings → **Hotkey: fullscreen** / **Hotkey: quit (hold)** (and the save-slot hotkeys): hold every
   button (or key) of the new chord together, then release; the first release binds them all (up to 4). A captured
   quit chord gets a 1.5 s hold. Holding a chord 4 s cancels. **Y** adds another chord, **X** disables the hotkey.
-- Stored in `config.ini [bindings]` as `hk_fullscreen` / `hk_quit` and passed in `PS2_INPUT_MAP` like the other
+- Stored in `config.ini [bindings]` as `hk_fullscreen` / `hk_quit` / `hk_ff` and passed in `PS2_INPUT_MAP` like the other
   bindings (env > config). Format: chords separated by `,`, inputs in a chord joined by `&`, optional `@<ms>` hold
   (0-10000): `hk_quit = back&start@1500, key:Escape@1000`. `key:Ctrl`, `key:Alt`, `key:Shift`, `key:GUI` mean either
   side. `none` disables; a hotkey left out keeps its default. The keys `&` and `@` can't be bound. An empty item
@@ -370,6 +378,7 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `icons/` | Button icon packs (our art), manifest/blit code, texture-dump tool, tests |
 | `0009-widescreen-present.patch` | Patch for ps2-web-recomp: `ps2::display_aspect()` (16:9 with `PS2_WIDESCREEN=1`) used by the SDL and WebGPU present |
 | `widescreen/` | Widescreen EE hooks (aspect setter + per-frame guard, camera aspect x 3/4 for hor+), `overrides.txt` and unit test |
+| `0010-fast-forward.patch` | Patch for ps2-web-recomp: `ps2::ff_active()` flag, read by the frame limiter and audio pacing |
 | `input/` | Controller remap layer and hotkeys (`PS2_INPUT_MAP` parser, chord/hold state, SDL apply) and their unit tests |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 | `steam-machine/cpu_flags.sh` | CPU-tuned build flags (`[build] cpu_tuned`) with generic fallback; test in `steam-machine/tests/` |

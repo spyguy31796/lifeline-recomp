@@ -45,7 +45,8 @@ SRC="$WORK/ps2-web-recomp"
 PATCHES=(0001-usbmic-hle-and-deci2-nohost.patch 0002-ee-overrides-and-voice-stage-a-b.patch 0003-input-remap-hook.patch
          0004-audio-buffer-and-perf-log.patch 0005-hotkeys-and-clean-quit.patch 0006-vu-fast-interpreter-and-check.patch
          0007-save-state-slots.patch 0008-texture-upload-hook.patch
-         0009-widescreen-present.patch)
+         0009-widescreen-present.patch
+         0010-fast-forward.patch)
 if [ ! -d "$SRC/.git" ]; then
   git clone "$UPSTREAM" "$SRC"
   git -C "$SRC" checkout --detach "$COMMIT"

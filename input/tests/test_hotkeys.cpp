@@ -139,6 +139,35 @@ int main() {
         s.update(0, raw, down); held.insert(name(start)); s.update(16, raw, down);
         CHECK(s.latched(kHkQuit, 2) && s.mask(raw, bits) == (1u << kStart));   // Select keeps going, Start hidden
     }
+    {   // fast-forward (0010): default chords, held detection, refusal / auto-release
+        const Map d = default_map();
+        CHECK(d.hk[kHkFastForward].size() == 2 && d.hk[kHkFastForward][0].keys[0].key == "Tab");
+        CHECK(d.hk[kHkFastForward][1].keys.size() == 2 && d.hk[kHkFastForward][1].keys[0].index == 4);   // back & righttrigger
+        for (const Chord &c : d.hk[kHkFastForward]) for (const Source &k : c.keys) CHECK(!(k.kind == Kind::Button && k.index == 1));   // never circle (b)
+        std::set<std::string> held;
+        const auto down = [&](const Source &x) { return held.count(name(x)) > 0; };
+        HotkeyState s;
+        CHECK(!s.held(kHkFastForward, d, down));
+        held = {"key:Tab"}; CHECK(s.held(kHkFastForward, d, down));
+        held = {name(d.hk[kHkFastForward][1].keys[0])}; CHECK(!s.held(kHkFastForward, d, down));   // Select alone
+        held.insert(name(d.hk[kHkFastForward][1].keys[1])); CHECK(s.held(kHkFastForward, d, down));
+        Map m; std::string e;
+        CHECK(parse_map("hk_ff=none", m, e) && m.hk[kHkFastForward].empty());
+        CHECK(parse_map("hk_ff=key:F", m, e) && m.hk[kHkFastForward].size() == 1);
+
+        FastForward f; FastForward::Why w;
+        CHECK(!f.update(false, false, false, w) && w == FastForward::Why::None);
+        CHECK(f.update(true, false, false, w) && f.on());                          // held: on
+        CHECK(!f.update(true, true, false, w) && w == FastForward::Why::Talk);     // circle: auto-release
+        CHECK(!f.update(true, false, false, w) && w == FastForward::Why::None);    // stays off while still held
+        CHECK(!f.update(false, false, false, w));                                  // let go
+        CHECK(f.update(true, false, false, w));                                    // press again: on
+        CHECK(!f.update(true, false, true, w) && w == FastForward::Why::Voice);    // voice listening: released
+        CHECK(!f.update(false, false, false, w));
+        CHECK(!f.update(true, false, true, w) && w == FastForward::Why::Voice);    // refused while busy
+        CHECK(!f.update(true, false, false, w));                                   // until re-pressed
+        CHECK(!f.update(false, false, false, w) && f.update(true, false, false, w));
+    }
     std::printf(fails ? "%d FAILED\n" : "all hotkey tests passed\n", fails);
     return fails != 0;
 }

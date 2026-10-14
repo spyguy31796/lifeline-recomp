@@ -35,6 +35,8 @@ QOL = [
     ("faster_loads",     "8 Faster loads / skip FMV / 60fps", "bool", False, "Fast-forward loads, skip seen FMVs"),
     ("vu_fast",          "9 Faster VU interpreter",     "bool", True,  "Faster vector-unit interpreter, same results; off = original (PS2_VU_FAST)"),
     ("button_icons",     "10 Button icons",             ("choice", ["ps2", "xbox", "deck"]), True, "On-screen button glyphs: PS2 (original), Xbox or Steam Deck (PS2_ICON_PACK)"),
+    # Available now, but off in a fresh config.ini (DEFAULTS below): opt in.
+    ("fast_forward",     "11 Fast-forward (hold)",      "bool", True,  "Hold Tab or Select+R2 to run up to 4x (PS2_FF_MAX); not while talking"),
 ]
 # [build] options change the compiled binary: they take effect on the next Install / update.
 BUILD = [("cpu_tuned", "CPU-tuned build (rebuild)",
