@@ -163,6 +163,17 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
 **Headless checks:** `launcher.sh --print-config`, `launcher.sh --dry-run`, `launcher.sh --set qol.resolution_scale=2`,
 and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.sh would pass and exits.
 
+### Performance diagnostics and audio buffer
+- `run.sh --debug` (or `PS2_PERF_LOG=1`) writes a line per second to `logs/run-<time>.log`:
+  `[perf] 58.9 fps  CPU 140%  GPU 35%  audio 96 ms (target 120)  underruns 3 (+1)`.
+  `audio` is how much sound is queued; `underruns` counts the times the queue ran dry (that's the crackle).
+  If fps stays below 60 the queue can't stay full and audio will crackle whatever the buffer size: the game is
+  paced by the audio clock, so the log tells you whether a slowdown is sustained or a short spike.
+- `PS2_AUDIO_BUFFER_MS` (default **120**, was a fixed 80; range 20-400): how much sound is kept queued. Bigger rides out
+  short stalls (e.g. a voice command being decoded) at the cost of that much extra audio latency.
+- `PS2_AUDIO_SAMPLES` (default 1024, power of two 256-8192): SDL device buffer size.
+- From `0004-audio-buffer-and-perf-log.patch`; `build.sh` applies it (also to existing checkouts).
+
 ## Known limits
 - Accuracy depends on the small Vosk model and your mic. Natural-sentence matching was tuned with synthetic voices plus one player's sessions.
 - A misheard word can still map to a different command that's valid in the current room.
@@ -181,6 +192,7 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `voice/tools/` | `fat.py` / `arcx.py` extract the phrase tables from your ISO; `build_aliases.py` builds the local alias table |
 | `steam-machine/` | `build.sh`, `run.sh`, `make-skip-state.sh` and kit notes |
 | `0003-input-remap-hook.patch` | Patch for ps2-web-recomp: weak hook that lets `input/` remap the controller |
+| `0004-audio-buffer-and-perf-log.patch` | Patch for ps2-web-recomp: configurable audio pacing buffer, underrun counter, `[perf]` log line |
 | `input/` | Controller remap layer (`PS2_INPUT_MAP` parser + SDL apply) and its unit test |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 

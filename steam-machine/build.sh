@@ -46,10 +46,12 @@ if [ ! -d "$SRC/.git" ]; then
   git -C "$SRC" apply --index "$OURCODE/0001-usbmic-hle-and-deci2-nohost.patch"
   git -C "$SRC" apply --index "$OURCODE/0002-ee-overrides-and-voice-stage-a-b.patch"
 fi
-# 0003 (controller remap hook) also applies to existing checkouts, once.
-if ! git -C "$SRC" apply --reverse --check "$OURCODE/0003-input-remap-hook.patch" 2>/dev/null; then
-  git -C "$SRC" apply --index "$OURCODE/0003-input-remap-hook.patch"
-fi
+# 0003 (controller remap hook) and 0004 (audio buffer + perf log) also apply to existing checkouts, once each.
+for p in 0003-input-remap-hook.patch 0004-audio-buffer-and-perf-log.patch; do
+  if ! git -C "$SRC" apply --reverse --check "$OURCODE/$p" 2>/dev/null; then
+    git -C "$SRC" apply --index "$OURCODE/$p"
+  fi
+done
 phase clone+patch
 [ "$(git -C "$SRC" rev-parse HEAD)" = "$COMMIT" ] || { echo "unexpected commit in $SRC" >&2; exit 1; }
 
