@@ -8,11 +8,31 @@ RUN=${1:-$HOME/lifeline-recomp/run.sh}
 HERE_RUN=$(dirname "$RUN"); LOG=$(mktemp)
 rm -rf "$HERE_RUN"/saves/slot[1-4].state "$HERE_RUN"/saves/slot[1-4].voice "$HERE_RUN"/saves/before-load.state "$HERE_RUN"/saves/before-load.state.tmp
 export SDL_AUDIODRIVER=dummy PS2_SDL_RENDERER=1 PS2_SAVE_SLOTS=1
-"$RUN" >"$LOG" 2>&1 &
+# Own process group (setsid; run.sh execs env -> ps2run, so $pid is ps2run and the group leader). Cleanup kills only
+# that group, never by name: other agents run ps2run on the same machine.
+setsid "$RUN" >"$LOG" 2>&1 &
 pid=$!
+cleanup() {
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM -- "-$pid" 2>/dev/null
+    for _ in $(seq 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+    kill -KILL -- "-$pid" 2>/dev/null
+  fi
+  rm -f "$LOG"
+}
+trap cleanup EXIT
+trap 'exit 130' INT; trap 'exit 143' TERM   # interrupted: exit, so the EXIT trap still cleans up
+# Find our window by PID (_NET_WM_PID), not by title; fall back to any window in our process group.
+find_window() {
+  local p w
+  for p in $(pgrep -g "$pid" 2>/dev/null || echo "$pid"); do
+    w=$(xdotool search --onlyvisible --pid "$p" 2>/dev/null | head -1); [ -n "$w" ] && { echo "$w"; return; }
+    w=$(xdotool search --pid "$p" 2>/dev/null | tail -1); [ -n "$w" ] && { echo "$w"; return; }
+  done
+}
 w=""
-for _ in $(seq 60); do w=$(xdotool search --name "ps2-web-recomp" 2>/dev/null | head -1); [ -n "$w" ] && break; sleep 0.5; done
-[ -n "$w" ] || { echo "FAIL: no window"; tail "$LOG"; kill "$pid" 2>/dev/null; exit 1; }
+for _ in $(seq 60); do w=$(find_window); [ -n "$w" ] && break; kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+[ -n "$w" ] || { echo "FAIL: no window"; tail "$LOG"; exit 1; }
 sleep 8; xdotool windowfocus --sync "$w"
 fail=0
 xdotool key F5; sleep 3
@@ -34,7 +54,9 @@ xdotool keydown F8; sleep 0.8; xdotool keyup F8; sleep 4
 kill -0 "$pid" 2>/dev/null || { echo "FAIL: game exited after the load"; fail=1; }
 xdotool keydown Escape; sleep 1.4; xdotool keyup Escape
 for _ in $(seq 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
-kill -0 "$pid" 2>/dev/null && { echo "FAIL: still running"; kill "$pid"; fail=1; }
+if kill -0 "$pid" 2>/dev/null; then   # never wait on a game that ignored the quit: kill our group now
+  echo "FAIL: still running"; fail=1; kill -KILL -- "-$pid" 2>/dev/null
+fi
 wait "$pid"; rc=$?
 grep -q "\[slots\] saved slot 1" "$LOG" || { echo "FAIL: no save log"; fail=1; }
 grep -q "\[slots\] slot 2 is empty" "$LOG" || { echo "FAIL: empty slot not refused"; fail=1; }
@@ -46,4 +68,4 @@ ls "$HERE_RUN"/saves/*.tmp >/dev/null 2>&1 && { echo "FAIL: .tmp left in saves/"
 [ "$rc" = 0 ] || { echo "FAIL: exit $rc"; fail=1; }
 grep -E "\[slots\]|\[ee\]|\[state\]|\[voice\] .*state loaded|halted" "$LOG"
 [ "$fail" = 0 ] && echo "save-slot smoke passed (exit $rc)"
-rm -f "$LOG"; exit "$fail"
+exit "$fail"

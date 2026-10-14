@@ -41,7 +41,7 @@ enum class SlotResult { Ok, Failed, Vetoed };
 struct LoadFollowUp {
     bool restore_backup = false;   // the load was attempted and failed: go back to before-load.state
     bool reset_voice = false;      // call lifeline_voice_after_load
-    bool voice_from_slot = false;  // with slotN.voice's context (Ok) or an empty one (Failed)
+    bool voice_from_slot = false;  // slotN.voice's context (Ok); otherwise (Failed) the context saved in before()
 };
 LoadFollowUp after_load(SlotResult r);
 

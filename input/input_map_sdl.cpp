@@ -173,7 +173,8 @@ void request_slot(const SaveSlots &slots, SlotAction action, int slot) {
         std::error_code ec;
         if (!std::filesystem::exists(final_path, ec)) { std::fprintf(stderr, "[slots] slot %d is empty\n", slot); return; }
         r.path = final_path;
-        r.before = [backup, slot] {   // re-checked on the emulation thread, then keep what's running in case the load is a mistake
+        auto prev_ctx = std::make_shared<std::string>();   // voice context of the running game, for a failed load
+        r.before = [backup, slot, prev_ctx] {   // re-checked on the emulation thread, then keep what's running in case the load is a mistake
             if (voice_busy()) { std::fprintf(stderr, "[slots] load slot %d skipped: voice busy\n", slot); return false; }
             // the backup is written beside it and renamed over it only when complete; if it can't be kept,
             // refuse the load so a failed load never "restores" a stale backup from an earlier session
@@ -190,16 +191,17 @@ void request_slot(const SaveSlots &slots, SlotAction action, int slot) {
                 std::fprintf(stderr, "[slots] load slot %d refused: could not write %s\n", slot, backup.c_str());
                 return false;
             }
+            if (lifeline_voice_context) if (const char *c = lifeline_voice_context()) *prev_ctx = c;
             return true;
         };
-        r.after = [backup, voice, slot](ps2::StateResult res) {
+        r.after = [backup, voice, slot, prev_ctx](ps2::StateResult res) {
             const LoadFollowUp f = after_load(slot_result(res));
             if (res == ps2::StateResult::Vetoed) std::fprintf(stderr, "[slots] load slot %d refused; the game keeps running\n", slot);
             if (f.restore_backup) {   // a failed load can leave the machine half restored: go back to what was running
                 std::fprintf(stderr, "[slots] load slot %d failed; restoring the game from before\n", slot);
                 if (!ps2::load_state(backup)) ps2::halt("save slot load failed and the previous game could not be restored");
             }
-            if (f.reset_voice && lifeline_voice_after_load) lifeline_voice_after_load(f.voice_from_slot ? read_file(voice).c_str() : "");
+            if (f.reset_voice && lifeline_voice_after_load) lifeline_voice_after_load(f.voice_from_slot ? read_file(voice).c_str() : prev_ctx->c_str());   // Failed: the game from before
             if (res == ps2::StateResult::Ok) std::fprintf(stderr, "[slots] loaded slot %d\n", slot);
             g_slot_busy = false;
         };
