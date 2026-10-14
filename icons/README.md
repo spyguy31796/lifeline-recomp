@@ -1,7 +1,7 @@
 # Button icon packs
 
 Swaps the PS2 button glyphs the game draws (Circle, Square, Cross, Triangle) for Xbox or Steam Deck ones. Choose a pack in
-Launcher → QoL → **9 Button icons** (`[qol] button_icons = ps2 | xbox | deck`). `run.sh` then sets
+Launcher → QoL → **10 Button icons** (`[qol] button_icons = ps2 | xbox | deck`). `run.sh` then sets
 `PS2_ICON_PACK=<install>/icons/<pack>`. `ps2` (the default) leaves the texture hook fully off.
 
 The packs follow the default bindings (Circle = B, Square = X, Cross = A, Triangle = Y). If you rebind the face
