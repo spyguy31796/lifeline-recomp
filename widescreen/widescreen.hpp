@@ -5,9 +5,9 @@
 // Two hooks, both only registered with PS2_WIDESCREEN=1:
 //   - Aspect setter 0x1CA208 (a0 = camera, f12 = horizontal, f13 = vertical; stores each when > 0). We scale
 //     f12 on the way in so camera re-init widens exactly once.
-//   - Per-frame camera update 0x1CA928 (a0 = camera). Widens cam+0x28 when it still holds a game value. A
-//     value that is already 0.75 (a state saved with widescreen on, loaded in a fresh process) is left alone,
-//     so it cannot become 0.5625. Needed because the setter is not called again after a state load.
+//   - Per-frame camera update 0x1CA928 (a0 = camera). Widens cam+0x28 only when it is exactly 1.0 (the game's
+//     normal value). Everything else is left alone, so a widescreen-on save loaded in a fresh process stays
+//     0.75 (not 0.5625) and a setter-widened non-1.0 base never keeps shrinking. Needed because the setter is not called again after a state load.
 #pragma once
 #include <cstdint>
 #include <cstring>
@@ -29,13 +29,12 @@ inline std::uint32_t widen_arg(std::uint32_t f12) {
     return bits(v * kFactor);
 }
 
-// Per-frame: rewrite cam+0x28 when it still holds a game value. Skip when it is already our 0.75 (covers a
-// widescreen-on save loaded in a fresh process) so it is never widened twice.
+// Per-frame: rewrite cam+0x28 only when it holds the game's normal 1.0 (a state saved with widescreen off).
+// Anything else is either already ours (0.75 from a widescreen-on save, or a setter-widened base like
+// 1.2 -> 0.9) or a value we do not know, so it is left alone and can never shrink frame after frame.
 inline bool widen_field(std::uint32_t cur, std::uint32_t &out) {
-    if (cur == bits(kFactor)) return false;
-    const float native = from_bits(cur);
-    if (!(native > 0.0f) || native > 16.0f) return false;
-    out = bits(native * kFactor);
+    if (cur != bits(1.0f)) return false;
+    out = bits(kFactor);
     return true;
 }
 }

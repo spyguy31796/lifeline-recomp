@@ -147,8 +147,8 @@ option is off (or `PS2_VU_FAST=0` is exported), the original interpreter runs. T
 aspect setter (`0x1CA208`) and per-frame camera update (`0x1CA928`) scale the camera's horizontal aspect
 (camera `+0x28`) by 3/4, so the game draws a 4/3-wider view into its usual frame, and the present path
 (0009) shows that frame at 16:9 (new windows open at 1280x720). Vertical field of view is unchanged. The
-setter scales its argument on the way in (camera re-init). The per-frame hook only rewrites a leftover
-game value and skips when the field is already 0.75, so a state saved with widescreen on and loaded in a
+setter scales its argument on the way in (camera re-init). The per-frame hook only rewrites the field when it
+is exactly 1.0 (the game's normal value) and leaves anything else alone, so a state saved with widescreen on and loaded in a
 fresh process stays 0.75 instead of being widened twice to 0.5625. With widescreen off nothing is
 registered, but there is still one `ee_override` lookup per frame at `0x1CA928` (and at the setter when
 that runs). Known limits: 2D HUD, menus, text and FMVs are drawn in screen space, so they are stretched

@@ -46,6 +46,12 @@ int main() {
     for (int i = 0; i < 3; ++i) frame(from_narrow, true);
     CHECK(from_bits(from_narrow.x) == 0.75f);                        // per-frame guard widens it once
 
+    Camera odd; setter(odd, bits(1.2f), true);                       // non-1.0 base via the setter: 1.2 -> 0.9
+    for (int i = 0; i < 10; ++i) frame(odd, true);
+    CHECK(odd.x == bits(1.2f * kFactor));                            // 10 frames later: not shrunk again
+    CHECK(!widen_field(bits(1.2f), o));                              // unknown raw value: left alone
+    CHECK(!widen_field(bits(0.9f), o));
+
     Camera off; setter(off, bits(1.0f), false); frame(off, false);
     CHECK(from_bits(off.x) == 1.0f);
 
