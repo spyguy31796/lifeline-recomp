@@ -165,11 +165,11 @@ that runs). Known limits: 2D HUD, menus, text and FMVs are drawn in screen space
 show the room at their left and right edges; a save state made with widescreen on keeps the narrow camera
 if loaded with it off, until the camera is re-initialised (next room).
 
-**Skip movies (`[qol] fmv_skip`, item 12, default off).** While a movie (`CKclMoviePlayer`, the game's
-full-screen FMVs) is playing, a fresh **Start** press ends it the same way the game's own AbortRequest does (state 5 → 6 →
+**Skip movies (`[qol] fmv_skip`, item 12, default off).** While a full-screen movie (FMV, played by the game's movie player) is playing, a fresh **Start** press
+ends it the same way the movie player's own abort routine (`0x1E85D0`) does (state 5 → 6 →
 close). Cross does not skip (it is the confirm button), and circle never does (push-to-talk). A skip is refused
 while a voice command is in progress (listening, a context being identified, or a result the game may not have
-read yet; same rule as the save-slot hotkeys). Only full-screen movies (the single-object path whose Execute returns to `0x1244E8`) are skippable;
+read yet; same rule as the save-slot hotkeys). Only full-screen movies (the single-object path whose per-frame update returns to `0x1244E8`) are skippable;
 in-scene slot movies (monitors) are left alone. Spoken prompts and dialog should not be affected: they use the
 voice engine, not the movie player. A skip is also refused while `lifeline_voice_busy()` is true. This has been
 checked on the intro movie only; the other full-screen movies (later story and scene-transition movies) have not

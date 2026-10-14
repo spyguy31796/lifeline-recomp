@@ -67,7 +67,7 @@ struct Registrar {
     Registrar() {
         const char *e = std::getenv("PS2_FMV_SKIP");
         if (!e || *e != '1') return;
-        ps2::register_override(kExecute, execute);
+        ps2::register_override(kPlayerUpdate, execute);
         std::fprintf(stderr, "[fmv] skip on (Start)\n");
     }
 } g_registrar;

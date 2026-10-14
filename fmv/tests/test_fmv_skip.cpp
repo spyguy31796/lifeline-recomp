@@ -64,7 +64,7 @@ int main() {
         CHECK(!up(l, 5, 1, kStart));
         CHECK(!up(l, 5, 1, 0) && up(l, 5, 1, kStart));
     }
-    // only the full-screen movie object's Execute call is skippable, never the in-scene slot array
+    // only the full-screen movie object's update call is skippable, never the in-scene slot array
     CHECK(skippable_caller(kFullscreenReturn));
     CHECK(!skippable_caller(kSlotArrayReturn));
     CHECK(!skippable_caller(0));
