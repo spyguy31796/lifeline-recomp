@@ -41,6 +41,56 @@ template <std::size_t N> int find(const char *(&t)[N], const std::string &n) {
 }
 }  // namespace
 
+const char *const kHotkeyNames[kHotkeyCount] = {"hk_fullscreen", "hk_quit"};
+const char *const kHotkeyDefaults[kHotkeyCount] = {
+    "key:F11, key:Alt&key:Return, back&rightstick",
+    "key:Ctrl&key:Q@500, key:Escape@1000, back&start@1500",
+};
+
+bool hotkey_from_name(const std::string &n, int &out) {
+    const std::string k = lower(trim(n));
+    for (out = 0; out < kHotkeyCount; ++out) if (k == kHotkeyNames[out]) return true;
+    return false;
+}
+
+bool same_source(const Source &a, const Source &b) {
+    return a.kind == b.kind && a.index == b.index && a.sign == b.sign && a.hat_mask == b.hat_mask && lower(a.key) == lower(b.key);
+}
+
+bool parse_chords(const std::string &spec, std::vector<Chord> &out, std::string &err) {
+    out.clear();
+    const std::string s = trim(spec);
+    if (s.empty() || lower(s) == "none") return true;
+    bool ok = true;
+    std::size_t a = 0;
+    while (a <= s.size()) {
+        std::size_t b = s.find(',', a); if (b == std::string::npos) b = s.size();
+        std::string item = trim(s.substr(a, b - a)); a = b + 1;
+        Chord c; bool good = !item.empty();
+        if (!good) err += "empty item in hotkey list '" + s + "' (stray ','?); ";
+        if (const auto at = item.rfind('@'); good && at != std::string::npos) {
+            const std::string ms = trim(item.substr(at + 1));
+            int v = 0; errno = 0; char *end = nullptr;
+            const long n = ms.empty() || !std::isdigit(static_cast<unsigned char>(ms[0])) ? -1 : std::strtol(ms.c_str(), &end, 10);
+            if (n < 0 || errno == ERANGE || end != ms.c_str() + ms.size() || n > kMaxHoldMs) { err += "bad hold time in '" + item + "'; "; good = false; }
+            else v = static_cast<int>(n);
+            c.hold_ms = v; item = trim(item.substr(0, at));
+        }
+        std::size_t p = 0;
+        while (good && p <= item.size()) {
+            std::size_t q = item.find('&', p); if (q == std::string::npos) q = item.size();
+            Source src; std::string e;
+            if (!parse_source(item.substr(p, q - p), src, e)) { err += e + "; "; good = false; }
+            else if (src.invert) { err += "'~' is not allowed in a hotkey: '" + item + "'; "; good = false; }
+            else c.keys.push_back(src);
+            p = q + 1;
+        }
+        if (good && (c.keys.empty() || static_cast<int>(c.keys.size()) > kMaxChordKeys)) { err += "a hotkey takes 1-4 inputs: '" + item + "'; "; good = false; }
+        if (good) out.push_back(c); else ok = false;
+    }
+    return ok;
+}
+
 bool target_from_name(const std::string &n, int &out) { out = find(kTargets, lower(trim(n))); return out >= 0; }
 
 bool parse_source(const std::string &raw, Source &o, std::string &err) {
@@ -90,6 +140,7 @@ Map default_map() {   // identical to the runner's built-in pad table
     set(kL3, "leftstick"); set(kR3, "rightstick"); set(kSelect, "back"); set(kStart, "start");
     set(kUp, "dpup"); set(kDown, "dpdown"); set(kLeft, "dpleft"); set(kRight, "dpright");
     set(kLX, "leftx"); set(kLY, "lefty"); set(kRX, "rightx"); set(kRY, "righty");
+    for (int h = 0; h < kHotkeyCount; ++h) { std::string e; parse_chords(kHotkeyDefaults[h], m.hk[h], e); }
     return m;
 }
 
@@ -103,6 +154,13 @@ bool parse_map(const std::string &spec, Map &out, std::string &err) {
         if (ent.empty()) continue;
         const auto eq = ent.find('=');
         int t;
+        if (eq != std::string::npos && hotkey_from_name(ent.substr(0, eq), t)) {
+            std::vector<Chord> v;
+            if (!parse_chords(ent.substr(eq + 1), v, err)) ok = false;
+            const std::string rhs = lower(trim(ent.substr(eq + 1)));
+            if (!v.empty() || rhs.empty() || rhs == "none") out.hk[t] = v;   // all-bad entries keep the default
+            continue;
+        }
         if (eq == std::string::npos || !target_from_name(ent.substr(0, eq), t)) { err += "bad entry '" + ent + "'; "; ok = false; continue; }
         std::vector<Source> v; bool good = true;
         std::string rhs = lower(trim(ent.substr(eq + 1)));

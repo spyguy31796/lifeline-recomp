@@ -46,8 +46,8 @@ if [ ! -d "$SRC/.git" ]; then
   git -C "$SRC" apply --index "$OURCODE/0001-usbmic-hle-and-deci2-nohost.patch"
   git -C "$SRC" apply --index "$OURCODE/0002-ee-overrides-and-voice-stage-a-b.patch"
 fi
-# 0003 (controller remap hook) and 0004 (audio buffer + perf log) also apply to existing checkouts, once each.
-for p in 0003-input-remap-hook.patch 0004-audio-buffer-and-perf-log.patch; do
+# 0003 (controller remap hook), 0004 (audio buffer + perf log) and 0005 (hotkeys + clean quit) also apply to existing checkouts, once each.
+for p in 0003-input-remap-hook.patch 0004-audio-buffer-and-perf-log.patch 0005-hotkeys-and-clean-quit.patch; do
   if ! git -C "$SRC" apply --reverse --check "$OURCODE/$p" 2>/dev/null; then
     git -C "$SRC" apply --index "$OURCODE/$p"
   fi

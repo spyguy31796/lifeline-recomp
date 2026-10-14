@@ -7,6 +7,8 @@ Config: [bindings] in config.ini, one line per PS2 input, e.g.
     select = none              #   joy:bN / joy:aN+ / joy:hN.up (raw), key:<SDL key name>
 Inline comments need a space before '#' (as above); both run.sh and the launcher strip them.
 Keys ',', ';', '=' and '#' can't be bound (they are separators in the file / PS2_INPUT_MAP).
+Hotkeys live in the same section: hk_fullscreen / hk_quit = chord[@hold_ms], chord...  where a chord is
+inputs joined by '&' that must all be held, e.g. hk_quit = back&start@1500, key:Escape@1000.
 run.sh turns the section into PS2_INPUT_MAP for ps2run (ourcode/input). No section = built-in layout.
 """
 import time
@@ -19,11 +21,16 @@ TARGETS = [
     ("start", "START"), ("select", "SELECT"),
     ("lx", "Left stick X"), ("ly", "Left stick Y"), ("rx", "Right stick X"), ("ry", "Right stick Y"),
 ]
+HOTKEYS = [("hk_fullscreen", "Hotkey: fullscreen"), ("hk_quit", "Hotkey: quit (hold)")]
+HOTKEY_DEFAULTS = {"hk_fullscreen": "key:F11, key:Alt&key:Return, back&rightstick",     # same as ourcode/input/input_map.cpp
+                   "hk_quit": "key:Ctrl&key:Q@500, key:Escape@1000, back&start@1500"}
+QUIT_HOLD_MS = 1500   # hold time given to a captured quit chord
+MAX_HOLD_MS, MAX_CHORD = 10000, 4
 ANALOG = {"lx", "ly", "rx", "ry"}
 DEFAULTS = {"cross": "a", "circle": "b", "square": "x", "triangle": "y", "l1": "leftshoulder", "r1": "rightshoulder",
             "l2": "lefttrigger", "r2": "righttrigger", "l3": "leftstick", "r3": "rightstick", "select": "back",
             "start": "start", "up": "dpup", "down": "dpdown", "left": "dpleft", "right": "dpright",
-            "lx": "leftx", "ly": "lefty", "rx": "rightx", "ry": "righty"}
+            "lx": "leftx", "ly": "lefty", "rx": "rightx", "ry": "righty", **HOTKEY_DEFAULTS}
 # SDL_GameControllerButton / Axis order (same tables as ourcode/input/input_map.cpp)
 BUTTONS = ["a", "b", "x", "y", "back", "guide", "start", "leftstick", "rightstick", "leftshoulder", "rightshoulder",
            "dpup", "dpdown", "dpleft", "dpright", "misc1", "paddle1", "paddle2", "paddle3", "paddle4", "touchpad"]
@@ -43,7 +50,7 @@ AXIS_ON, AXIS_OFF = 0.6, 0.3
 
 import re
 _COMMENT = re.compile(r"\s+[#;].*$")
-FORBIDDEN_KEYS = {",", ";", "=", "#"}
+FORBIDDEN_KEYS = {",", ";", "=", "#", "&", "@"}
 
 
 def strip_comment(v):
@@ -65,28 +72,69 @@ def validate(target, spec):
     if target not in DEFAULTS: return "unknown input %r" % target
     spec = strip_comment(spec)
     if spec.lower() in ("", "none"): return ""
+    if target in HOTKEY_DEFAULTS:
+        for chord in [x.strip() for x in spec.split(",")]:
+            if not chord: return "empty item in %r (stray ','?)" % spec
+            keys, at, hold = chord.rpartition("@") if "@" in chord else (chord, "", "")
+            if at and not (re.fullmatch(r"\s*\d+\s*", hold) and int(hold) <= MAX_HOLD_MS):
+                return "bad hold time in %r (0-%d ms)" % (chord, MAX_HOLD_MS)
+            parts = [k.strip() for k in keys.split("&")]
+            if not 1 <= len(parts) <= MAX_CHORD: return "a hotkey takes 1-%d inputs: %r" % (MAX_CHORD, chord)
+            for raw in parts:
+                bad = _source_error(raw, analog=False)
+                if bad: return bad
+        return ""
     for raw in [x.strip() for x in spec.split(",")]:
-        s = raw if raw.startswith("key:") else raw.lower()
-        m = _SRC.match(s)
-        if not m or not raw: return "unknown source %r" % raw
-        if any(g is not None and int(g) > 255 for g in m.groups()[:3]):
-            return "index out of range in %r" % raw
-        if m.group(4) is not None and (not m.group(4).strip() or set(m.group(4)) & FORBIDDEN_KEYS):
-            return "key %r can't be bound" % raw
-        whole_axis = (s.rstrip("~") in AXES) or bool(re.match(r"^joy:a\d+~?$", s))
-        if target in ANALOG and not whole_axis: return "%s needs a whole axis, got %r" % (target, raw)
-        if target not in ANALOG and s.endswith("~"): return "'~' only applies to sticks: %r" % raw
-        if s.lstrip("+-") in BUTTONS and s[:1] in "+-": return "'+'/'-' only applies to axes: %r" % raw
+        bad = _source_error(raw, target in ANALOG, target)
+        if bad: return bad
     return ""
 
 
+def _source_error(raw, analog, target="hotkey"):
+    s = raw if raw.startswith("key:") else raw.lower()
+    m = _SRC.match(s)
+    if not m or not raw: return "unknown source %r" % raw
+    if any(g is not None and int(g) > 255 for g in m.groups()[:3]):
+        return "index out of range in %r" % raw
+    if m.group(4) is not None and (not m.group(4).strip() or set(m.group(4)) & FORBIDDEN_KEYS):
+        return "key %r can't be bound" % raw
+    whole_axis = (s.rstrip("~") in AXES) or bool(re.match(r"^joy:a\d+~?$", s))
+    if analog and not whole_axis: return "%s needs a whole axis, got %r" % (target, raw)
+    if not analog and s.endswith("~"): return "'~' only applies to sticks: %r" % raw
+    if s.lstrip("+-") in BUTTONS and s[:1] in "+-": return "'+'/'-' only applies to axes: %r" % raw
+    return ""
+
+
+def push_to_talk_warning(cfg, key, spec=None):
+    """Hotkey chords that use a push-to-talk (circle) input: return a warning, or ""."""
+    if key not in HOTKEY_DEFAULTS: return ""
+    spec = current(cfg, key) if spec is None else strip_comment(spec)
+    talk = {x.strip().lower() for x in current(cfg, "circle").split(",") if x.strip() and x.strip() != "none"}
+    used = [k.strip() for chord in spec.split(",") for k in chord.rpartition("@")[0 if "@" in chord else 2].split("&")]
+    hit = sorted({k for k in used if k.lower() in talk})
+    if not hit: return ""
+    return "Warning: %s is push-to-talk (Circle); it talks when pressed first and is held back from the game when pressed later" % ", ".join(pretty(h) for h in hit)
+
+
 def pretty(spec):
+    if "&" in spec or "@" in spec:   # hotkey chords
+        out = []
+        for chord in [x.strip() for x in spec.split(",") if x.strip()]:
+            keys, _, hold = chord.rpartition("@") if "@" in chord else (chord, "", "")
+            names = [_pretty_one(k.strip()) for k in keys.split("&")]
+            out.append(" + ".join(names) + (" (hold %gs)" % (int(hold) / 1000.0) if hold.strip() not in ("", "0") else ""))
+        return ", ".join(out) or "(none)"
     out = []
     for s in [x.strip() for x in spec.split(",") if x.strip()]:
         inv = s.endswith("~"); b = s.rstrip("~"); sign = ""
         if b[:1] in "+-" and b[1:] in AXES: sign, b = b[0], b[1:]
         out.append((PRETTY.get(b, b) + sign + (" inverted" if inv else "")))
     return ", ".join(out) or "(none)"
+
+
+def _pretty_one(s):
+    if s.startswith("key:"): return s[4:]
+    return pretty(s)
 
 
 def set_binding(cfg, key, spec):
@@ -109,7 +157,7 @@ def reset(cfg):
 def to_env(cfg):
     """The PS2_INPUT_MAP string run.sh would build (used by --dry-run / tests)."""
     if not cfg.has_section("bindings"): return ""
-    return ";".join("%s=%s" % (k, current(cfg, k)) for k, _ in TARGETS if cfg.has_option("bindings", k))
+    return ";".join("%s=%s" % (k, current(cfg, k)) for k, _ in TARGETS + HOTKEYS if cfg.has_option("bindings", k))
 
 
 def event_inputs(pg, e, analog, controller_ids):
@@ -187,11 +235,48 @@ class Capture:
         return "Release to bind %s  (keep holding to cancel)" % pretty(self.cand)
 
 
+class ChordCapture(Capture):
+    """Like Capture, but every input pressed together is recorded; the first release binds them all
+    ("back&start"). Holding the chord CHORD_CANCEL seconds cancels."""
+
+    CHORD_CANCEL = 4.0
+
+    def __init__(self, hold_ms=0, now=None):
+        super().__init__(now)
+        self.chord, self.hold_ms = [], hold_ms
+
+    def feed(self, src, down, now=None):
+        now = time.monotonic() if now is None else now
+        if self.phase in ("wait", "held") and down and src not in self.chord and len(self.chord) < MAX_CHORD:
+            self.chord.append(src)
+            if self.phase == "wait": self.phase, self.t = "held", now
+        if down: self.held.add(src)
+        else: self.held.discard(src)
+        if self.phase == "settle": self.quiet_since = now
+        elif self.phase == "held" and not down and src in self.chord and not self.res:
+            self.res = ("bind", "&".join(self.chord) + ("@%d" % self.hold_ms if self.hold_ms else ""))
+        return self.tick(now)
+
+    def tick(self, now=None):
+        now = time.monotonic() if now is None else now
+        if not self.res and self.phase == "held" and now - self.t >= self.CHORD_CANCEL:
+            self.res = ("cancel", "held to cancel")
+        if self.phase == "held": return self.res
+        return super().tick(now)
+
+    def prompt(self, now=None):
+        now = time.monotonic() if now is None else now
+        if self.phase == "wait":
+            return "Hold all buttons of the hotkey together, then release (%.0fs left)" % max(0, TIMEOUT - (now - self.t))
+        if self.phase == "held": return "Release to bind %s  (keep holding to cancel)" % pretty("&".join(self.chord))
+        return super().prompt(now)
+
+
 def screen(pg, scr, fonts, cfg, save, events=None):
     """Bindings screen. A = rebind, Y = add another input, X = clear, B = back (saves).
     Last row resets everything to the default layout."""
     F, S, T = fonts
-    rows = TARGETS + [("__reset", "Reset all to defaults")]
+    rows = TARGETS + HOTKEYS + [("__reset", "Reset all to defaults")]
     sel, cap, msg, clock = 0, None, "", pg.time.Clock()
     ctl_ids = set()
     for i in range(pg.joystick.get_count()):
@@ -222,7 +307,9 @@ def screen(pg, scr, fonts, cfg, save, events=None):
             elif key == "__reset":
                 if name == "a": reset(cfg); save(cfg); msg = "Default layout restored"
             elif name in ("a", "y"):
-                cap, mode = Capture(), ("replace" if name == "a" else "add"); cap.analog = key in ANALOG
+                if key in HOTKEY_DEFAULTS: cap = ChordCapture(QUIT_HOLD_MS if key == "hk_quit" else 0)
+                else: cap = Capture(); cap.analog = key in ANALOG
+                mode = "replace" if name == "a" else "add"
             elif name == "x": set_binding(cfg, key, "none"); save(cfg); msg = "Cleared"
         if cap:
             r = cap.tick()
@@ -230,7 +317,8 @@ def screen(pg, scr, fonts, cfg, save, events=None):
                 key = rows[sel][0]
                 if r[0] == "bind":
                     (set_binding if mode == "replace" else add_binding)(cfg, key, r[1]); save(cfg)
-                    msg = "%s -> %s" % (dict(TARGETS)[key], pretty(current(cfg, key)))
+                    msg = "%s -> %s" % (dict(TARGETS + HOTKEYS)[key], pretty(current(cfg, key)))
+                    msg = push_to_talk_warning(cfg, key) or msg
                 else: msg = "Cancelled (%s)" % r[1]
                 cap = None; pg.event.clear()
         W, H = scr.get_size(); scr.fill((12, 14, 18))
