@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Lifeline Recomp launcher entry point. Add THIS file to Steam as a non-Steam game.
-# Uses a per-user venv with the pygame wheel (it bundles SDL2), so nothing needs root.
+# Uses a per-user venv with the pygame-ce wheel (bundles SDL2; has wheels for new Pythons such as 3.14), so nothing needs root.
 # First run needs network (pip downloads pygame); falls back to `pip install --user`.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -13,8 +13,8 @@ if [ -x "$VENV/bin/python" ] && has_pg "$VENV/bin/python"; then PY="$VENV/bin/py
 elif has_pg python3; then PY=python3
 else
   echo "first run: installing pygame (needs network) ..." >&2
-  if { python3 -m venv "$VENV" && "$VENV/bin/python" -m pip install -q pygame; } >>"$LOG" 2>&1 && has_pg "$VENV/bin/python"; then PY="$VENV/bin/python"
-  elif python3 -m pip install -q --user pygame >>"$LOG" 2>&1 && has_pg python3; then PY=python3
+  if { python3 -m venv "$VENV" && "$VENV/bin/python" -m pip install -q --only-binary=:all: pygame-ce; } >>"$LOG" 2>&1 && has_pg "$VENV/bin/python"; then PY="$VENV/bin/python"
+  elif python3 -m pip install -q --user --only-binary=:all: pygame-ce >>"$LOG" 2>&1 && has_pg python3; then PY=python3
   fi
 fi
 if [ -z "$PY" ]; then
