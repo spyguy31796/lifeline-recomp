@@ -408,7 +408,10 @@ def main(argv=None):
                 bad = bindings.validate(opt, v)
                 if bad: ap.error("--set bindings.%s: %s" % (opt, bad))
                 v = bindings.strip_comment(v) or "none"
-                bindings.set_binding(c, opt, v); continue
+                bindings.set_binding(c, opt, v)
+                w = bindings.push_to_talk_warning(c, opt)
+                if w: print(w, file=sys.stderr)
+                continue
             if not sep or not dot or not c.has_section(sec): ap.error("bad --set %r (want section.key=value)" % x)
             c.set(sec, opt, v)
         save(c); return 0

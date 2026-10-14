@@ -169,7 +169,7 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
 | Action | Keyboard | Controller |
 |---|---|---|
 | Toggle fullscreen | F11, Alt+Enter | hold Select (Back/View), press R3 (right stick click) |
-| Quit to the launcher | Ctrl+Q, or hold Esc 1 s | hold Select + Start 1.5 s |
+| Quit to the launcher | hold Ctrl+Q 0.5 s, or hold Esc 1 s | hold Select + Start 1.5 s |
 
 - Quit is a clean shutdown: the emulator halts, a memory card written in the last frames is saved
   (`[mc] card saved on exit`), queued sound plays out and the audio device is closed, then the runner exits 0, so
@@ -177,18 +177,23 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
 - While a quit hold is under way the window title shows `Hold to quit... NN%` (and, with the SDL presenter, a bar along
   the bottom edge); letting go of any button cancels it. The default WebGPU presenter draws no overlay, and in Game
   Mode the title is not visible, so the hold itself is the guard.
-- **Chord buttons and the game:** once every button of a chord is down, those buttons are kept from the game until
-  all of them are released (including the built-in keyboard keys, e.g. Enter = START during Alt+Enter). The button
-  pressed *first* reaches the game until the chord is complete, because the layer can't know yet that a chord is
-  coming: pressing Select a moment before Start/R3 gives the game a brief Select press. Press the buttons together
-  if that matters.
+- **Chord buttons and the game:**
+  - The **first** button of a chord reaches the game as usual until the chord is complete, and keeps reaching it
+    after that: a button that was already held is never cut off (a held push-to-talk keeps talking).
+  - Buttons pressed **after** the first one are kept from the game while the chord is held (including built-in
+    keyboard keys, e.g. Enter = START during Alt+Enter). Pressed in the same frame, none of them reaches the game.
+  - There is no input delay, so a partial chord is not held back: **press Select first**, then the other button.
+    All controller defaults start with Select, which does nothing harmful during normal play; just say Select.
+  - The launcher warns when a hotkey chord uses a push-to-talk (Circle) input: pressed first it talks, pressed
+    later it is held back while the chord is down.
 - Rebind them in Launcher → Controller bindings → **Hotkey: fullscreen** / **Hotkey: quit (hold)**: hold every
   button (or key) of the new chord together, then release; the first release binds them all (up to 4). A captured
   quit chord gets a 1.5 s hold. Holding a chord 4 s cancels. **Y** adds another chord, **X** disables the hotkey.
 - Stored in `config.ini [bindings]` as `hk_fullscreen` / `hk_quit` and passed in `PS2_INPUT_MAP` like the other
   bindings (env > config). Format: chords separated by `,`, inputs in a chord joined by `&`, optional `@<ms>` hold
   (0-10000): `hk_quit = back&start@1500, key:Escape@1000`. `key:Ctrl`, `key:Alt`, `key:Shift`, `key:GUI` mean either
-  side. `none` disables; a hotkey left out keeps its default. The keys `&` and `@` can't be bound.
+  side. `none` disables; a hotkey left out keeps its default. The keys `&` and `@` can't be bound. An empty item
+  (`a, , b` or a trailing `,`) is reported (`--set` rejects it; the game logs it and keeps the other chords).
 - Game side: `input/hotkeys.cpp` (chord/hold state) and `lifeline_hotkeys()` in `input/input_map_sdl.cpp`, hooked by
   `0005-hotkeys-and-clean-quit.patch` (weak hook in the runner's poll, forced memory-card save at halt, audio drain);
   `build.sh` applies it. Rebuild once (Install / update) to get it.

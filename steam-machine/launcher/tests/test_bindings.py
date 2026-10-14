@@ -95,12 +95,18 @@ check(g("ly") == "righty~", "stick bound inverted (got %r)" % g("ly"))
 check(saved, "saved on exit")
 
 # --- hotkeys: validation, pretty, env, chord capture ---
-for good in [("hk_quit", "back&start@1500"), ("hk_quit", "key:Escape@1000, key:Ctrl&key:Q"), ("hk_fullscreen", "back & rightstick"),
+for good in [("hk_quit", "back&start@1500"), ("hk_quit", "key:Escape@1000, key:Ctrl&key:Q@500"), ("hk_fullscreen", "back & rightstick"),
              ("hk_fullscreen", "none"), ("hk_quit", "paddle1@0"), ("hk_quit", "-lefty&dpup@10000"), ("hk_quit", B.HOTKEY_DEFAULTS["hk_quit"])]:
     check(B.validate(*good) == "", "valid %r: %s" % (good, B.validate(*good)))
 for bad in [("hk_quit", "back&zz"), ("hk_quit", "back@-1"), ("hk_quit", "back@10001"), ("hk_quit", "back@1.5"), ("hk_quit", "back&&start"),
             ("hk_quit", "a&b&x&y&start"), ("hk_quit", "righty~"), ("hk_quit", "key:&"), ("hk_quit", "key:@"), ("hk_other", "a")]:
     check(B.validate(*bad) != "", "invalid %r accepted" % (bad,))
+check("empty item" in B.validate("hk_quit", "back&start@1500, , key:F11") and "empty item" in B.validate("hk_quit", "key:F11,"), "empty chord item warned")
+check(B.HOTKEY_DEFAULTS["hk_quit"].startswith("key:Ctrl&key:Q@500,"), "Ctrl+Q is a 0.5 s hold")
+w = configparser.ConfigParser()
+check(B.push_to_talk_warning(w, "hk_quit", "back&b@1500") .startswith("Warning: B is push-to-talk"), "warns on circle source in a chord")
+check(B.push_to_talk_warning(w, "hk_quit") == "" and B.push_to_talk_warning(w, "circle", "b") == "", "no warning for defaults / non-hotkeys")
+B.set_binding(w, "circle", "paddle1"); check("Paddle 1" in B.push_to_talk_warning(w, "hk_fullscreen", "back&paddle1"), "follows the circle binding")
 check(B.pretty("back&start@1500, key:Escape@1000") == "Back/View + Start/Menu (hold 1.5s), Escape (hold 1s)", "pretty chords: " + B.pretty("back&start@1500, key:Escape@1000"))
 check(B.pretty("key:Alt&key:Return") == "Alt + Return", "pretty key chord")
 cfg = configparser.ConfigParser()
@@ -132,4 +138,13 @@ B.screen(pg, scr, (f, f, f), cfg, lambda c: saved.append(1), events=events)
 check(g("hk_quit") == "back&start@%d" % B.QUIT_HOLD_MS, "quit chord captured (got %r)" % g("hk_quit"))
 check(g("hk_fullscreen") == "key:left alt&key:return", "keyboard chord captured (got %r)" % g("hk_fullscreen"))
 check(B.validate("hk_fullscreen", g("hk_fullscreen")) == "" and saved, "captured chord validates and is saved")
+# capturing a chord with the push-to-talk button shows the warning on screen
+cfg = configparser.ConfigParser(); shown = []
+plan[:] = [[btn(pg.CONTROLLER_BUTTON_DPAD_UP)] * 2, [btn(pg.CONTROLLER_BUTTON_A)], [btn(pg.CONTROLLER_BUTTON_A, False)], "wait",
+           [btn(pg.CONTROLLER_BUTTON_BACK)], [btn(pg.CONTROLLER_BUTTON_B)], "wait", [btn(pg.CONTROLLER_BUTTON_B, False)], [btn(pg.CONTROLLER_BUTTON_BACK, False)], "wait",
+           "shot", [btn(pg.CONTROLLER_BUTTON_B)]]
+class Spy:
+    def render(self, t, *a): shown.append(t); return f.render(t, *a)
+B.screen(pg, scr, (Spy(), Spy(), Spy()), cfg, lambda c: None, events=events)
+check(g("hk_quit") == "back&b@%d" % B.QUIT_HOLD_MS and any(t.startswith("Warning: B is push-to-talk") for t in shown), "push-to-talk warning shown after capture")
 print("%d FAILED" % fails if fails else "all bindings tests passed"); sys.exit(1 if fails else 0)

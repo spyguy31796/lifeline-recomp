@@ -133,12 +133,7 @@ extern "C" int lifeline_hotkeys(SDL_GameController *pad, const Uint8 *keys, std:
     static HotkeyState state;
     const Map &m = hotkey_map();
     const unsigned fired = state.update(SDL_GetTicks(), m, [&](const Source &s) { return pressed(pad, keys, s, false) > 0; });
-    std::uint16_t mask = 0;
-    for (int h = 0; h < kHotkeyCount; ++h)
-        for (std::size_t i = 0; i < m.hk[h].size(); ++i)
-            if (state.latched(h, i))
-                for (const Source &s : m.hk[h][i].keys) mask |= game_bits(m, s);
-    *buttons &= static_cast<std::uint16_t>(~mask);
+    *buttons &= static_cast<std::uint16_t>(~state.mask(m, [&](const Source &s) { return game_bits(m, s); }));
     *quit_progress = state.quit_progress();
     if (fired & (1u << kHkFullscreen)) std::fprintf(stderr, "[hotkey] fullscreen\n");
     if (fired & (1u << kHkQuit)) std::fprintf(stderr, "[hotkey] quit\n");

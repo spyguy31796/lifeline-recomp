@@ -27,6 +27,9 @@ int main() {
     e.clear(); CHECK(!parse_chords("a@10001", v, e)); e.clear(); CHECK(!parse_chords("a@1x", v, e)); e.clear(); CHECK(!parse_chords("a@", v, e));
     e.clear(); CHECK(!parse_chords("a&&b", v, e)); e.clear(); CHECK(!parse_chords("a&b&x&y&start", v, e));
     e.clear(); CHECK(!parse_chords("righty~", v, e));
+    e.clear(); CHECK(!parse_chords("back&start@1500, , key:F11", v, e) && v.size() == 2 && e.find("empty item") != std::string::npos);
+    e.clear(); CHECK(!parse_chords("key:F11,", v, e) && v.size() == 1 && e.find("empty item") != std::string::npos);
+    CHECK(d.hk[kHkQuit][0].keys.size() == 2 && d.hk[kHkQuit][0].hold_ms == 500);   // Ctrl+Q needs 0.5 s
     e.clear(); CHECK(!parse_chords("zz, back&start@1500", v, e) && v.size() == 1 && v[0].hold_ms == 1500);   // good chords kept
     // in PS2_INPUT_MAP, next to the normal bindings; env string decides, unset hotkeys keep their defaults
     Map m; e.clear();
@@ -71,12 +74,53 @@ int main() {
     {   // keyboard: Esc needs 1 s; Ctrl+Q is instant; F11 toggles
         HotkeyState s; held = {"key:Escape"};
         CHECK(s.update(0, t, down) == 0 && s.update(999, t, down) == 0 && s.update(1000, t, down) == QUIT);
-        HotkeyState k; held = {"key:Ctrl"}; CHECK(k.update(0, t, down) == 0); held.insert("key:Q"); CHECK(k.update(10, t, down) == QUIT);
+        HotkeyState k; held = {"key:Ctrl"}; CHECK(k.update(0, t, down) == 0); held.insert("key:Q");
+        CHECK(k.update(10, t, down) == 0 && k.update(509, t, down) == 0 && k.update(510, t, down) == QUIT);
         HotkeyState f; held = {"key:F11"}; CHECK(f.update(0, t, down) == FS);
     }
     {   // SDL tick wrap-around
         HotkeyState s; held = {name(back), name(start)};
         s.update(0xFFFFFF00u, t, down); CHECK(s.update(0xFFFFFF00u + 1500u, t, down) == QUIT);
+    }
+    {   // regression: a held push-to-talk member stays down when the chord completes; only later members are hidden.
+        // Keyboard X = circle (push-to-talk), Backspace = select; chord Backspace&X; circle pressed first.
+        Map km; e.clear();
+        CHECK(parse_map("circle=key:X; select=key:Backspace; hk_quit=key:Backspace&key:X@1500; hk_fullscreen=none", km, e));
+        auto bits = [&](const Source &s) -> std::uint16_t {
+            std::uint16_t b = 0;
+            for (int tt = 0; tt < kLX; ++tt) for (const Source &x : km.src[tt]) if (same_source(x, s)) b |= static_cast<std::uint16_t>(1u << tt);
+            return b;
+        };
+        auto frame = [&](HotkeyState &s, std::uint32_t now) {   // the buttons the game sees this frame
+            s.update(now, km, down);
+            std::uint16_t b = 0;
+            for (const std::string &k : held) { Source x; std::string ee; parse_source(k, x, ee); b |= bits(x); }
+            return static_cast<std::uint16_t>(b & ~s.mask(km, bits));
+        };
+        const std::uint16_t CIRCLE = 1u << kCircle, SELECT = 1u << kSelect;
+        HotkeyState s; held = {"key:X"};
+        bool talk_ok = true;
+        for (std::uint32_t f = 0; f < 10; ++f) talk_ok = talk_ok && (frame(s, f * 16) & CIRCLE);
+        held.insert("key:Backspace");                             // completes the chord while talking
+        for (std::uint32_t f = 10; f < 60; ++f) {
+            const std::uint16_t b = frame(s, f * 16);
+            talk_ok = talk_ok && (b & CIRCLE);                    // the voice window must not end early
+            CHECK(!(b & SELECT));                                 // the member pressed later is hidden
+        }
+        CHECK(talk_ok && s.latched(kHkQuit, 0) && !s.hidden(kHkQuit, 0, 1) && s.hidden(kHkQuit, 0, 0));
+        held.erase("key:Backspace"); CHECK(frame(s, 1000) & CIRCLE);
+        held.clear(); CHECK(frame(s, 1016) == 0);
+        // both pressed in the same frame: neither reached the game, both hidden
+        HotkeyState s2; held = {"key:X", "key:Backspace"}; CHECK(frame(s2, 0) == 0);
+        // Select first (the default chords' order): Select keeps going, Start is hidden
+        Map dm = default_map(); HotkeyState s3; held = {name(back)};
+        auto pad = [&](const Source &x) -> std::uint16_t {
+            std::uint16_t b = 0;
+            for (int tt = 0; tt < kLX; ++tt) for (const Source &y : dm.src[tt]) if (same_source(y, x)) b |= static_cast<std::uint16_t>(1u << tt);
+            return b;
+        };
+        s3.update(0, dm, down); held.insert(name(start)); s3.update(16, dm, down);
+        CHECK(s3.mask(dm, pad) == (1u << kStart));
     }
     std::printf(fails ? "%d FAILED\n" : "all hotkey tests passed\n", fails);
     return fails != 0;

@@ -44,7 +44,7 @@ template <std::size_t N> int find(const char *(&t)[N], const std::string &n) {
 const char *const kHotkeyNames[kHotkeyCount] = {"hk_fullscreen", "hk_quit"};
 const char *const kHotkeyDefaults[kHotkeyCount] = {
     "key:F11, key:Alt&key:Return, back&rightstick",
-    "key:Ctrl&key:Q, key:Escape@1000, back&start@1500",
+    "key:Ctrl&key:Q@500, key:Escape@1000, back&start@1500",
 };
 
 bool hotkey_from_name(const std::string &n, int &out) {
@@ -67,6 +67,7 @@ bool parse_chords(const std::string &spec, std::vector<Chord> &out, std::string 
         std::size_t b = s.find(',', a); if (b == std::string::npos) b = s.size();
         std::string item = trim(s.substr(a, b - a)); a = b + 1;
         Chord c; bool good = !item.empty();
+        if (!good) err += "empty item in hotkey list '" + s + "' (stray ','?); ";
         if (const auto at = item.rfind('@'); good && at != std::string::npos) {
             const std::string ms = trim(item.substr(at + 1));
             int v = 0; errno = 0; char *end = nullptr;

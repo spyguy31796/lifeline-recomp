@@ -23,7 +23,7 @@ TARGETS = [
 ]
 HOTKEYS = [("hk_fullscreen", "Hotkey: fullscreen"), ("hk_quit", "Hotkey: quit (hold)")]
 HOTKEY_DEFAULTS = {"hk_fullscreen": "key:F11, key:Alt&key:Return, back&rightstick",     # same as ourcode/input/input_map.cpp
-                   "hk_quit": "key:Ctrl&key:Q, key:Escape@1000, back&start@1500"}
+                   "hk_quit": "key:Ctrl&key:Q@500, key:Escape@1000, back&start@1500"}
 QUIT_HOLD_MS = 1500   # hold time given to a captured quit chord
 MAX_HOLD_MS, MAX_CHORD = 10000, 4
 ANALOG = {"lx", "ly", "rx", "ry"}
@@ -74,6 +74,7 @@ def validate(target, spec):
     if spec.lower() in ("", "none"): return ""
     if target in HOTKEY_DEFAULTS:
         for chord in [x.strip() for x in spec.split(",")]:
+            if not chord: return "empty item in %r (stray ','?)" % spec
             keys, at, hold = chord.rpartition("@") if "@" in chord else (chord, "", "")
             if at and not (re.fullmatch(r"\s*\d+\s*", hold) and int(hold) <= MAX_HOLD_MS):
                 return "bad hold time in %r (0-%d ms)" % (chord, MAX_HOLD_MS)
@@ -102,6 +103,17 @@ def _source_error(raw, analog, target="hotkey"):
     if not analog and s.endswith("~"): return "'~' only applies to sticks: %r" % raw
     if s.lstrip("+-") in BUTTONS and s[:1] in "+-": return "'+'/'-' only applies to axes: %r" % raw
     return ""
+
+
+def push_to_talk_warning(cfg, key, spec=None):
+    """Hotkey chords that use a push-to-talk (circle) input: return a warning, or ""."""
+    if key not in HOTKEY_DEFAULTS: return ""
+    spec = current(cfg, key) if spec is None else strip_comment(spec)
+    talk = {x.strip().lower() for x in current(cfg, "circle").split(",") if x.strip() and x.strip() != "none"}
+    used = [k.strip() for chord in spec.split(",") for k in chord.rpartition("@")[0 if "@" in chord else 2].split("&")]
+    hit = sorted({k for k in used if k.lower() in talk})
+    if not hit: return ""
+    return "Warning: %s is push-to-talk (Circle); it talks when pressed first and is held back from the game when pressed later" % ", ".join(pretty(h) for h in hit)
 
 
 def pretty(spec):
@@ -306,6 +318,7 @@ def screen(pg, scr, fonts, cfg, save, events=None):
                 if r[0] == "bind":
                     (set_binding if mode == "replace" else add_binding)(cfg, key, r[1]); save(cfg)
                     msg = "%s -> %s" % (dict(TARGETS + HOTKEYS)[key], pretty(current(cfg, key)))
+                    msg = push_to_talk_warning(cfg, key) or msg
                 else: msg = "Cancelled (%s)" % r[1]
                 cap = None; pg.event.clear()
         W, H = scr.get_size(); scr.fill((12, 14, 18))
