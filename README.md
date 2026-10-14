@@ -208,7 +208,9 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
   captured mid-listen has the game's recognizer (0x2DBE38) and the game's voice object's own listening flag (this+0x10) reset to idle, so the next Circle press posts cmd 1 (start) then cmd 2 (stop) and listens fresh — not a lone stop. No default
   chord uses Circle. If `slotN.voice` can't be written after a save, the old one is removed so it is never paired
   with the new state (that slot then loads with an unknown context until the game sets the next one).
-  Tests: `steam-machine/tests/save-slots-smoke.sh` and `save-slots-midlisten-smoke.sh` (a slot captured mid-listen,
+  The voice-object reset is armed only by a mid-listen load and expires after a few frames, on the next start/stop
+  command or the next load, and never clears while our recognizer is listening (`voice/listen_reset.hpp`, unit test in
+  `voice/tests/`). Tests: `steam-machine/tests/save-slots-smoke.sh` and `save-slots-midlisten-smoke.sh` (a slot captured mid-listen,
   then one Circle press must post start then stop and be recognized); both need Xvfb + xdotool.
 - No on-screen confirmation yet (it is in the log, and the WebGPU presenter has no overlay).
 - Memory-card saves are untouched: a slot is a snapshot of the machine, and the card file is not rolled back.

@@ -9,6 +9,7 @@
 //   PS2_VOICE_WAV_SCHEDULE / PS2_VOICE_WAV_DIR  file audio instead of the SDL microphone (see audio_source.hpp)
 //   PS2_VOICE_DEBUG=1, PS2_VOICE_LOG=<file>    per-recognition log (default ./voice.log)
 #include "lifeline_addrs.hpp"
+#include "listen_reset.hpp"
 #include "recognizer.hpp"
 #include "result_writer.hpp"
 #include "debug_log.hpp"
@@ -66,6 +67,7 @@ struct State {
 // Read by the save-slot hotkeys on the host thread (lifeline_voice_busy below).
 std::atomic<bool> g_listening{false}, g_identifying{false};
 std::atomic<std::int64_t> g_result_ms{0};   // steady clock ms of the last result handed to the game
+ListenReset g_listen_reset;   // emulation thread only (Execute, PostMessage, after_load)
 std::int64_t steady_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
@@ -216,6 +218,7 @@ bool post_message(ps2::Cpu &c, std::uint32_t) {
     const std::uint32_t m = c.r[4].w[0];
     const std::uint32_t type = ps2::ld32(m), p1 = ps2::ld32(m + 4), p2 = ps2::ld32(m + 8), p3 = ps2::ld32(m + 12);
     if (type != 3) std::fprintf(stderr, "[voice] f%llu cmd %u p1 %08X p2 %08X p3 %08X ra %08X\n", (unsigned long long)now(), type, p1, p2, p3, c.r[31].w[0]);
+    if (type == 1 || type == 2) g_listen_reset.on_command();
     switch (type) {
     case 1: ps2::st32(kState, 1); g.rec->start(); g_listening = true; break;
     case 2: // stop listening (push-to-talk released): deliver an injected result, else go idle
@@ -287,15 +290,15 @@ bool get_status(ps2::Cpu &, std::uint32_t) {
 // Passive: after a slot load, put the game's voice object's own listening flag (this+0x10) back to idle.
 // Done here, with this call's `this`, never with an address seen before the load: a slot from another scene
 // can place the object elsewhere, and a stale pointer would write into unrelated memory.
-std::atomic<bool> g_reset_game_listening{false};
 bool voice_object_execute(ps2::Cpu &c, std::uint32_t) {
-    if (g_reset_game_listening.exchange(false, std::memory_order_relaxed)) {
+    if (!g_listen_reset.armed()) return false;
+    if (g_listen_reset.on_execute(now(), g_listening)) {
         const std::uint32_t self = c.r[4].w[0];
         const bool was = ps2::ld32(self + kVoiceObjListeningOff) == 1;
         if (was) ps2::st32(self + kVoiceObjListeningOff, 0);
         std::fprintf(stderr, "[voice] f%llu game voice object %s\n", (unsigned long long)now(),
                      was ? "was listening, reset to idle" : "idle");
-    }
+    } else std::fprintf(stderr, "[voice] f%llu game voice object reset skipped (expired or listening)\n", (unsigned long long)now());
     return false;
 }
 
@@ -355,7 +358,7 @@ extern "C" void lifeline_voice_after_load(const char *context) {
     // The game's voice object can also say "listening" in a state taken mid-listen. Left that way, its next
     // Circle press only posts a stop (cmd 2) with no start (cmd 1) and the word is lost. Its next Execute call
     // (before it reads the pad) puts it back to idle; see voice_object_execute.
-    g_reset_game_listening.store(true, std::memory_order_relaxed);
+    g_listen_reset.on_load(now(), st == 1);   // only a mid-listen state arms it
     std::fprintf(stderr, "[voice] f%llu state loaded: context %s, recognizer %s\n", (unsigned long long)now(), g.context.c_str(),
                  st == 1 ? "was listening, reset to idle" : "idle");
 }
