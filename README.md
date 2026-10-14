@@ -283,8 +283,12 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 - The previous `ps2run` is copied to `ps2run.prev` and put back if any compile or link fails ("build failed: the
   previous ps2run was kept"). A killed build (SIGKILL, power loss) can't run that restore; the next run finds
   `ps2run.prev` and puts it back first ("restored ps2run from an interrupted build"), or `mv` it back by hand.
+  The restore copies to `ps2run.tmp` and renames it over `ps2run`, and skips (with a warning) a `.prev` that is
+  empty or not executable. A marker that claims a patch the tree lacks makes the apply loop start over at the
+  first missing patch instead of failing.
 - Tests: `steam-machine/tests/patch-marker-test.sh` (fast, synthetic checkout: unpatched, partial, older kit,
-  name-only / corrupt / CRLF marker, changed patch, apply-failure fallback) and
+  name-only / corrupt / CRLF marker, changed patch, apply-failure fallback,
+  stale marker restart), `bash steam-machine/tests/test_ps2run_restore.sh` (ps2run.prev restore) and
   `steam-machine/tests/build-upgrade-test.sh <built-workdir> <iso> <scratch-dir>` (previous release -> new
   build.sh twice, then a source that can't link).
 

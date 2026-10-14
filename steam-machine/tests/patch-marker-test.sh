@@ -44,6 +44,10 @@ cp "$T/p2.orig" "$T/patches/p2.patch"; run >/dev/null || true
 # marker says p3 is missing but the tree has it: apply fails -> detection instead of aborting
 fresh; run; grep -v '^p3\|^p4' "$M" > "$M.x"; mv "$M.x" "$M"
 run && done_ok && grep -q "does not apply" "$T/out" && ok "apply failure falls back to detection" || { bad "fallback"; cat "$T/out"; }
+# stale marker: claims p1-p3 but the tree only has p1 -> restart from p2 instead of exit 1
+fresh; run; head -3 "$M" > "$T/stale"; fresh; upto 1; cp "$T/stale" "$M"
+run && done_ok && grep -q "marker was stale" "$T/out" && grep -q "applied p2.patch" "$T/out" && grep -q "applied p3.patch" "$T/out" \
+  && ok "stale marker: restarted from the first missing patch" || { bad "stale marker"; cat "$T/out"; }
 # a patch that really can't apply: clear error, non-zero
 fresh; run; printf -- '--- a/f.txt\n+++ b/f.txt\n@@ -1,1 +1,1 @@\n-nope\n+x\n' > "$T/patches/p4.patch"; sed -i '/^p4/d' "$M"
 if run; then bad "broken patch accepted"; else grep -q "delete .*lifeline-patches" "$T/out" && ok "unappliable patch: error names the marker to delete" || bad "error text"; fi

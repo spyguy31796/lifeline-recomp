@@ -50,7 +50,7 @@ apply_patches() {
   declare -gA LP_DONE=()
   mkdir -p "$LP_STORE"
   _lp_load || _lp_detect
-  local i j p cur
+  local i j p cur restarted=
   for ((i=0; i<${#LP_ALL[@]}; i++)); do
     p=${LP_ALL[$i]}; cur=$(_lp_sha "$LP_DIR/$p")
     [ "${LP_DONE[$p]:-}" = "$cur" ] && continue
@@ -73,6 +73,10 @@ apply_patches() {
     echo "$p does not apply; checking which patches the tree already has" >&2
     _lp_detect
     [ "${LP_DONE[$p]:-}" = "$cur" ] && continue
+    if [ -z "$restarted" ]; then   # stale marker (claimed a patch the tree lacks): start over at the first missing one
+      restarted=1; echo "patch marker was stale; continuing from the first patch the tree is missing" >&2
+      i=-1; continue
+    fi
     echo "$p can't be applied to $LP_SRC; delete $LP_MARK (or reset the checkout) and run again" >&2
     return 1
   done

@@ -73,12 +73,13 @@ configure_existing() { [ ! -f "$NAT/build.ninja" ] || configure; }
 BUILD_OK=""
 # A ps2run.prev left behind means an earlier run was killed (SIGKILL skips the restore below): it is the
 # last good binary, so put it back first.
-if [ -f "$NAT/ps2run.prev" ]; then mv -f "$NAT/ps2run.prev" "$NAT/ps2run"; echo "restored ps2run from an interrupted build"; fi
-[ -f "$NAT/ps2run" ] && cp -p "$NAT/ps2run" "$NAT/ps2run.prev"
+# shellcheck source=steam-machine/ps2run_backup.sh
+. "$KIT/ps2run_backup.sh"
+restore_ps2run "$NAT" "restored ps2run from an interrupted build" || true
+# A bad .prev that couldn't be restored is not overwritten with the current (possibly half-built) ps2run.
+[ -f "$NAT/ps2run" ] && [ ! -e "$NAT/ps2run.prev" ] && cp -p "$NAT/ps2run" "$NAT/ps2run.prev"
 keep_old_ps2run() {
-  if [ -z "$BUILD_OK" ] && [ -f "$NAT/ps2run.prev" ]; then
-    mv -f "$NAT/ps2run.prev" "$NAT/ps2run"; echo "build failed: the previous ps2run was kept" >&2
-  fi
+  if [ -z "$BUILD_OK" ]; then restore_ps2run "$NAT" "build failed: the previous ps2run was kept" >&2 || true; fi
 }
 trap keep_old_ps2run EXIT
 # An existing build dir has the source list and flags of the previous build: refresh both before port.sh
