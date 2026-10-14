@@ -120,10 +120,11 @@ Keyboard works too (arrows, Enter, Esc).
 | 5 | Always-on listening | `always_on` | `PS2_VOICE_ALWAYS_ON=1` | coming soon |
 | 6 | Large speech model | `large_model` | `PS2_VOICE_VOSK_MODEL=.../vosk-model-en-us-0.22` (if downloaded) | coming soon |
 | 7 | Native widescreen | `widescreen` | `PS2_WIDESCREEN=1` | **works** (16:9 hor+; 2D HUD/menus stretched, see below) |
-| 8 | Faster loads / skip FMV / 60fps | `faster_loads` | `PS2_FAST_LOADS=1` | coming soon |
+| 8 | Faster loads / 60fps | `faster_loads` | `PS2_FAST_LOADS=1` | coming soon |
 | 9 | Faster VU interpreter | `vu_fast` | `PS2_VU_FAST=1` | **works** (off by default; see below) |
 | 10 | Button icons (PS2 / Xbox / Steam Deck) | `button_icons` | `PS2_ICON_PACK=<dir>` | works for the OPTION menu (rebuild once); see `icons/README.md` |
 | 11 | Fast-forward (hold) | `fast_forward` | `PS2_FAST_FORWARD=1` | **works**, off by default (hold Tab / Select+R2, up to `PS2_FF_MAX` x, default 4) |
+| 12 | Skip movies | `fmv_skip` | `PS2_FMV_SKIP=1` | **works** (off by default; Start ends a movie, see below) |
 
 "Coming soon" items are greyed out in the launcher; their variables are reserved and ignored by the current build.
 
@@ -163,6 +164,18 @@ that runs). Known limits: 2D HUD, menus, text and FMVs are drawn in screen space
 4/3 horizontally; screens the game draws as a 3D panel facing the camera (e.g. the security-room monitor)
 show the room at their left and right edges; a save state made with widescreen on keeps the narrow camera
 if loaded with it off, until the camera is re-initialised (next room).
+
+**Skip movies (`[qol] fmv_skip`, item 12, default off).** While a full-screen movie (FMV, played by the game's movie player) is playing, a fresh **Start** press
+ends it the same way the movie player's own abort routine (`0x1E85D0`) does (state 5 → 6 →
+close). Cross does not skip (it is the confirm button), and circle never does (push-to-talk). A skip is refused
+while a voice command is in progress (listening, a context being identified, or a result the game may not have
+read yet; same rule as the save-slot hotkeys). Only full-screen movies (the single-object path whose per-frame update returns to `0x1244E8`) are skippable;
+in-scene slot movies (monitors) are left alone. Spoken prompts and dialog should not be affected: they use the
+voice engine, not the movie player. A skip is also refused while `lifeline_voice_busy()` is true. This has been
+checked on the intro movie only; the other full-screen movies (later story and scene-transition movies) have not
+been checked for a concurrent voice prompt, so the wording is "should not", not "never". Some scripted movies keep a wall-clock wait after the picture ends,
+so the screen can go black until that wait finishes; the game then continues normally.
+Set-but-empty `PS2_FMV_SKIP` forces it off; only unset + config on enables it.
 
 **First start (Desktop Mode, Konsole):**
 ```sh
@@ -379,6 +392,8 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `0009-widescreen-present.patch` | Patch for ps2-web-recomp: `ps2::display_aspect()` (16:9 with `PS2_WIDESCREEN=1`) used by the SDL and WebGPU present |
 | `widescreen/` | Widescreen EE hooks (aspect setter + per-frame guard, camera aspect x 3/4 for hor+), `overrides.txt` and unit test |
 | `0010-fast-forward.patch` | Patch for ps2-web-recomp: `ps2::ff_active()` flag, read by the frame limiter and audio pacing |
+| `0011-pad-buttons-getter.patch` | Patch for ps2-web-recomp: `pad_buttons()` getter (relaxed atomic mirror; used by FMV skip) |
+| `fmv/` | FMV skip EE hook (`PS2_FMV_SKIP`) and its unit test |
 | `input/` | Controller remap layer and hotkeys (`PS2_INPUT_MAP` parser, chord/hold state, SDL apply) and their unit tests |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 | `steam-machine/cpu_flags.sh` | CPU-tuned build flags (`[build] cpu_tuned`) with generic fallback; test in `steam-machine/tests/` |

@@ -39,6 +39,7 @@ ic=$(cfg qol button_icons)
 case "$ic" in ""|ps2|*[!A-Za-z0-9_-]*) ;; *)
   for d in "$HERE/icons.local/$ic" "$HERE/icons/$ic"; do [ -f "$d/icons.txt" ] && { : "${PS2_ICON_PACK:=$d}"; break; }; done;; esac
 on fast_forward  && : "${PS2_FAST_FORWARD:=1}"                          # item 11 (hold hk_ff; PS2_FF_MAX caps speed)
+[ -z "${PS2_FMV_SKIP+x}" ] && on fmv_skip && PS2_FMV_SKIP=1            # item 12. Set-but-empty stays off; only unset + config on enables it.
 [ "$(cfg launch voice_off)" = 1 ] && : "${PS2_VOICE_OFF:=1}"
 # Controller bindings + hotkeys: [bindings] -> PS2_INPUT_MAP="circle=b,paddle1;lx=leftx;hk_quit=back&start@1500;..." (read by ourcode/input in ps2run)
 if [ -f "$CFG" ] && [ -z "${PS2_INPUT_MAP+x}" ]; then
@@ -61,6 +62,7 @@ ENVS+=(PS2_VOICE_DEBUG="$PS2_VOICE_DEBUG" PS2_VOICE_LOG="$PS2_VOICE_LOG")
 ENVS+=(PS2_VOICE_VOSK_MODEL="$PS2_VOICE_VOSK_MODEL" PS2_VOICE_VOSK_LIB="$PS2_VOICE_VOSK_LIB" PS2_VOICE_ASSETS="$PS2_VOICE_ASSETS")
 for v in "${QOL_VARS[@]}"; do [ -n "${!v:-}" ] && ENVS+=("$v=${!v}"); done
 [ -n "${PS2_VU_FAST+x}" ] && ENVS+=(PS2_VU_FAST="$PS2_VU_FAST")   # set-but-empty forces off; must pass through (QOL_VARS skips empty)
+[ -n "${PS2_FMV_SKIP+x}" ] && ENVS+=(PS2_FMV_SKIP="$PS2_FMV_SKIP")   # same: set-but-empty forces fmv_skip off
 [ -n "${LIFELINE_PRINT_ENV:-}" ] && { printf '%s\n' "${ENVS[@]}"; exit 0; }   # headless check
 if [ "$DEBUG" = 1 ]; then
   ts=$(date +%Y%m%d-%H%M%S)
