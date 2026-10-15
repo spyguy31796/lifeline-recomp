@@ -23,7 +23,17 @@ public:
     // and it keeps saying so for a few frames until fresh pad data reaches the game. Execute starts a listen whenever
     // its flag is idle and that bit is set, so from the reset frame on the bit is held to the real pad until the
     // game's own mask goes up by itself or Circle is really pressed: a listen starts only on a real press.
-    void start_resync() { resync_ = true; }
+    void start_resync() { resync_ = true; noted_ = false; }   // each resync logs its first hold again
+    // True once per resync: the first frame the restored bit is held up (for a single log line).
+    bool note_hold_once() { if (noted_) return false; noted_ = true; return true; }
+    // The pad record pointer read from game memory: write through it only if the held mask word lies inside
+    // PS2 main RAM (32 MB, uncached mirrors stripped) and is word-aligned. Rejects 0 and garbage pointers.
+    static constexpr std::uint32_t kMainRamSize = 0x02000000;
+    static bool pad_word_ok(std::uint32_t pad, std::uint32_t off) {
+        if (pad == 0) return false;
+        const std::uint64_t a = std::uint64_t(pad & 0x0FFFFFFFu) + off;
+        return (a & 3) == 0 && a + 4 <= kMainRamSize;
+    }
     // Execute: the game's mask now; returns the mask the game should see this frame.
     std::uint32_t resync_held(std::uint32_t mask, std::uint32_t circle_bit, bool physically_held) {
         if (!resync_) return mask;
@@ -36,6 +46,7 @@ public:
 private:
     bool armed_ = false;
     bool resync_ = false;
+    bool noted_ = false;
     std::uint64_t at_ = 0;
 };
 

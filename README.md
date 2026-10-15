@@ -11,7 +11,7 @@ quality-of-life fixes.
 - Natural sentences: say a full sentence such as "walk over to the X" or "can you go to the X please" instead of only a bare command and object.
   Filler words are ignored, common verb synonyms work (walk/go/move/head, look/check/examine, take/pick/grab...),
   and objects still match despite plural/singular or small mishearings.
-- Spoken numbers work (the small model hears digits as words); anything the game can't use gets the game's normal "BAD!" feedback instead of silence.
+- Spoken numbers work (the small model hears digits as words); anything the game can't use gets the game's normal rejection feedback instead of silence.
 - Optional save state that skips the tutorial, made locally from your own disc.
 - Voice log at `logs/voice.log` that shows what was heard and why it was accepted or rejected.
 
