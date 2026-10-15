@@ -22,6 +22,17 @@ int main() {
       CHECK(r.resync_held(0x20, 0x20, false) == 0x20); }      // later presses are the game's own
     { ListenReset r; r.start_resync(); CHECK(r.resync_held(0x20, 0x20, true) == 0x20); CHECK(!r.resyncing()); }   // real press
     { ListenReset r; r.start_resync(); r.on_load(300, false); CHECK(!r.resyncing()); }                            // next load
+    // The hold log fires once per resync, and again after a new resync even if the last one was cancelled.
+    { ListenReset r; r.start_resync(); CHECK(r.note_hold_once()); CHECK(!r.note_hold_once());
+      r.cancel_resync(); r.start_resync(); CHECK(r.note_hold_once()); }
+    // Pad record pointer bounds before the write.
+    CHECK(!ListenReset::pad_word_ok(0, 0x1E4));
+    CHECK(ListenReset::pad_word_ok(0x00400000, 0x1E4));
+    CHECK(ListenReset::pad_word_ok(0x20400000, 0x1E4));                 // uncached mirror
+    CHECK(!ListenReset::pad_word_ok(0x00400002, 0x1E4));                // misaligned
+    CHECK(ListenReset::pad_word_ok(0x02000000 - 4 - 0x1E4, 0x1E4));     // last word of RAM
+    CHECK(!ListenReset::pad_word_ok(0x02000000 - 0x1E4, 0x1E4));        // past the end
+    CHECK(!ListenReset::pad_word_ok(0xFFFFFFFC, 0x1E4));
     std::printf(fails ? "%d FAILED\n" : "listen_reset: all passed\n", fails);
     return fails != 0;
 }

@@ -1,4 +1,4 @@
-// Lifeline voice replacement: EE function overrides for CKclAsr (see VOICE-MAP.md).
+// Lifeline voice replacement: EE function overrides for the game's speech recognizer (see VOICE-MAP.md).
 // Environment:
 //   PS2_VOICE_OFF=1          disable all overrides (original VoCon path runs)
 //   PS2_VOICE_ASSETS=<dir>   directory tree of the user's own extracted .ctx/.wrd files, used only
@@ -181,8 +181,8 @@ bool deliver_recognition() {
     Recognition r;
     if (!g.rec->poll(r)) return false;
     const bool accept = !r.words.empty();
-    // Speech that matched nothing (off-grammar or [unk]) is delivered as a VoCon-style rejection: no words,
-    // confidence 0, result id -1. GetStatus then reports 4 and the game's voice object plays its normal "BAD!" feedback
+    // Speech that matched nothing (off-grammar or [unk]) is delivered as a rejection: no words,
+    // confidence 0, result id -1. GetStatus then reports 4 and the game's voice object plays its normal rejection feedback
     // (verified in the tutorial). Only an empty decode (silence / accidental tap) leaves the engine idle.
     const bool heard = !r.raw.empty();
     if (accept) write_result(r.words, r.confidence, 0);
@@ -306,16 +306,14 @@ bool voice_object_execute(ps2::Cpu &c, std::uint32_t) {
     // (cmd 1) right after the load instead of on the press. Hold that bit to the real Circle until it catches up.
     if (g_listen_reset.resyncing()) {
         const std::uint32_t pad = ps2::ld32(kPadTable + 4 * kPadIndexVoice);
-        if (pad == 0) { g_listen_reset.cancel_resync(); return false; }
+        if (!ListenReset::pad_word_ok(pad, kPadHeldOff)) { g_listen_reset.cancel_resync(); return false; }
         const std::uint32_t held = ps2::ld32(pad + kPadHeldOff);
         const bool down = g_circle_down.load();
         const std::uint32_t fixed = g_listen_reset.resync_held(held, kPadHeldCircle, down);
         if (fixed != held) ps2::st32(pad + kPadHeldOff, fixed);
-        static bool told = false;   // log the hold once per load, not every frame
-        if (!g_listen_reset.resyncing()) {
-            told = false;
+        if (!g_listen_reset.resyncing()) {   // the hold is logged once per resync (reset by start_resync)
             std::fprintf(stderr, "[voice] f%llu pad circle in sync (%s)\n", (unsigned long long)now(), down ? "real press" : "up");
-        } else if (fixed != held && !told) { told = true; std::fprintf(stderr, "[voice] f%llu pad circle: restored held, real up; kept up until a real press\n", (unsigned long long)now()); }
+        } else if (fixed != held && g_listen_reset.note_hold_once()) { std::fprintf(stderr, "[voice] f%llu pad circle: restored held, real up; kept up until a real press\n", (unsigned long long)now()); }
     }
     return false;
 }

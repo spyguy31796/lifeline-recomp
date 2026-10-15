@@ -1,4 +1,4 @@
-// Writes a recognition result into CKclAsr's globals the same way its own result handler does.
+// Writes a recognition result into the game's speech recognizer's globals the same way its own result handler does.
 #pragma once
 #include <cstdint>
 #include <string>
