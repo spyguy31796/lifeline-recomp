@@ -10,6 +10,7 @@ if "$CXX" -std=c++20 -Wall -Wextra -I"$ROOT/fmv" "$ROOT/fmv/tests/test_fmv_skip.
 # hotkeys + input_map need their .cpp sources (see the comment at the top of each test file)
 if "$CXX" -std=c++20 -Wall -Wextra -I"$ROOT/input" "$ROOT/input/input_map.cpp" "$ROOT/input/hotkeys.cpp" "$ROOT/input/tests/test_hotkeys.cpp" -o "$T/test_hotkeys" && "$T/test_hotkeys"; then :; else echo "FAILED: test_hotkeys"; fail=1; fi
 if "$CXX" -std=c++20 -Wall -Wextra -I"$ROOT/input" "$ROOT/input/input_map.cpp" "$ROOT/input/tests/test_input_map.cpp" -o "$T/test_input_map" && "$T/test_input_map"; then :; else echo "FAILED: test_input_map"; fail=1; fi
+if "$CXX" -std=c++20 -Wall -Wextra -I"$ROOT/voice" "$ROOT/voice/tests/test_listen_reset.cpp" -o "$T/test_listen_reset" && "$T/test_listen_reset"; then :; else echo "FAILED: test_listen_reset"; fail=1; fi
 bash "$ROOT/steam-machine/tests/test_vu_check.sh" >/dev/null || { echo "FAILED: test_vu_check.sh"; fail=1; }
 # Launcher tests: the launcher's own venv has pygame (test_bindings / test_play need it). LAUNCHER_PY overrides;
 # else $LIFELINE_WORK (default ~/lifeline-recomp)/launcher-venv/bin/python if it runs and imports pygame; else python3.
