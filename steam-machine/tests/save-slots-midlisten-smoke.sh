@@ -58,6 +58,13 @@ fail=0
 xdotool keydown F8; sleep 0.8; xdotool keyup F8; sleep 3
 grep -q "\[slots\] loaded slot 1" "$LOG" || { echo "FAIL: slot 1 not loaded"; fail=1; }
 grep -q "game voice object was listening, reset to idle" "$LOG" || { echo "FAIL: the slot was not mid-listen on the game side"; fail=1; }
+# No listen may start between the load and the press: the restored "Circle held" must not count as a press.
+pre=$(wc -l < "$LOG")
+lf=$(grep -a "\[voice\] f[0-9]* state loaded" "$LOG" | tail -1 | sed -n 's/.*\] f\([0-9]*\) .*/\1/p')
+[ -n "$lf" ] || { echo "FAIL: no voice 'state loaded' line"; fail=1; }
+if sed -n "$(grep -an '\[slots\] loaded slot 1' "$LOG" | tail -1 | cut -d: -f1),\$p" "$LOG" | grep -aq "cmd 1 "; then
+  echo "FAIL: cmd 1 before the press (listen started on the load frame)"; fail=1
+fi
 # One Circle press (keyboard X = Circle). Must issue cmd 1 on press and cmd 2 on release.
 xdotool keydown x; sleep 0.6; xdotool keyup x; sleep 2
 # After the load, the first cmd 1 / cmd 2 pair is the one we care about (ignore any from before the load).
@@ -70,6 +77,11 @@ cmd2=$(grep -n "cmd 2 " "$LOG.after" | head -1 | cut -d: -f1)
 [ -n "$cmd1" ] || { echo "FAIL: no cmd 1 after load (first press lost)"; fail=1; }
 [ -n "$cmd2" ] || { echo "FAIL: no cmd 2 after load"; fail=1; }
 [ -n "$cmd1" ] && [ -n "$cmd2" ] && [ "$cmd1" -lt "$cmd2" ] || { echo "FAIL: expected cmd 1 before cmd 2 (got cmd1=$cmd1 cmd2=$cmd2)"; fail=1; }
+# The first cmd 1 after the load must come from the press: logged after it and on a later frame than the load.
+c1line=$(tail -n +"$((pre+1))" "$LOG" | grep -a "cmd 1 " | head -1)
+c1f=$(sed -n 's/.*\] f\([0-9]*\) cmd 1 .*/\1/p' <<<"$c1line")
+[ -n "$c1f" ] || { echo "FAIL: no cmd 1 after the press"; fail=1; }
+[ -n "$c1f" ] && [ -n "$lf" ] && [ "$c1f" -gt "$lf" ] || { echo "FAIL: cmd 1 frame ($c1f) not after the load frame ($lf)"; fail=1; }
 # A lone cmd 2 with no prior cmd 1 after the load is the bug.
 if [ -z "$cmd1" ] && [ -n "$cmd2" ]; then echo "FAIL: stop without start (mid-listen flag not cleared)"; fail=1; fi
 # The stop after that one press must deliver a recognition (the injected phrase).
@@ -77,6 +89,6 @@ grep -q "injected '" "$LOG.after" || { echo "FAIL: the word was not recognized a
 xdotool keydown Escape; sleep 1.4; xdotool keyup Escape
 for _ in $(seq 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
 kill -0 "$pid" 2>/dev/null && { echo "FAIL: still running"; fail=1; kill -KILL -- "-$pid" 2>/dev/null; }
-grep -E "\[slots\] loaded|cmd [12] |state loaded|injected" "$LOG" | tail -40
+grep -E "\[slots\] loaded|cmd [12] |state loaded|injected|pad circle" "$LOG" | tail -40
 [ "$fail" = 0 ] && echo "save-slot mid-listen smoke passed"
 exit "$fail"

@@ -19,6 +19,7 @@
 extern "C" __attribute__((weak)) bool lifeline_voice_busy();
 extern "C" __attribute__((weak)) const char *lifeline_voice_context();
 extern "C" __attribute__((weak)) void lifeline_voice_after_load(const char *context);
+extern "C" __attribute__((weak)) void lifeline_voice_pad_circle(bool held);
 
 using namespace lifeline_input;
 
@@ -301,6 +302,7 @@ extern "C" int lifeline_hotkeys(SDL_GameController *pad, const Uint8 *keys, std:
     const bool talk_held = *buttons & (1u << kCircle);   // before chord masking: the game sees push-to-talk
     *buttons &= static_cast<std::uint16_t>(~state.mask(m, [&](const Source &s) { return game_bits(pad, m, s); }));
     *quit_progress = state.quit_progress();
+    if (lifeline_voice_pad_circle) lifeline_voice_pad_circle((*buttons & (1u << kCircle)) != 0);   // after load: real Circle
     if (ff_enabled()) {   // PS2_FAST_FORWARD unset: hk_ff is cleared and voice_busy() is never polled
         static FastForward ff;
         const bool was = ff.on();

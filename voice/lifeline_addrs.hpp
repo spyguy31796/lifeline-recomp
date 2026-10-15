@@ -16,6 +16,13 @@ constexpr std::uint32_t kThreadActive = 0x2DBE58;
 // set, the next Circle edge takes the stop path (cmd 2) instead of the start path (cmd 1).
 constexpr std::uint32_t kVoiceObjExecute      = 0x143368;
 constexpr std::uint32_t kVoiceObjListeningOff = 0x10;
+// The pad record Execute reads (0x101868(0x8003): word at 0x38CF00 + 3*4). +0x1E4 is the held-button mask in game
+// memory; bit 0x20 is Circle. Execute starts a listen (cmd 1) whenever its flag is idle and this bit is set, so after
+// a load the mask restored from the state (Circle held at save time) starts a listen on the load frame.
+constexpr std::uint32_t kPadTable       = 0x38CF00;
+constexpr std::uint32_t kPadIndexVoice  = 3;
+constexpr std::uint32_t kPadHeldOff     = 0x1E4;
+constexpr std::uint32_t kPadHeldCircle  = 0x20;
 constexpr std::uint32_t kWordCount    = 0x34F43C;
 constexpr std::uint32_t kResultId     = 0x34F440;
 constexpr std::uint32_t kWordBuf      = 0x3F6600; // 10 x 64

@@ -68,6 +68,7 @@ struct State {
 std::atomic<bool> g_listening{false}, g_identifying{false};
 std::atomic<std::int64_t> g_result_ms{0};   // steady clock ms of the last result handed to the game
 ListenReset g_listen_reset;   // emulation thread only (Execute, PostMessage, after_load)
+std::atomic<bool> g_circle_down{false};   // the Circle the game is fed this frame (input layer, lifeline_voice_pad_circle)
 std::int64_t steady_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
@@ -291,14 +292,31 @@ bool get_status(ps2::Cpu &, std::uint32_t) {
 // Done here, with this call's `this`, never with an address seen before the load: a slot from another scene
 // can place the object elsewhere, and a stale pointer would write into unrelated memory.
 bool voice_object_execute(ps2::Cpu &c, std::uint32_t) {
-    if (!g_listen_reset.armed()) return false;
-    if (g_listen_reset.on_execute(now(), g_listening)) {
-        const std::uint32_t self = c.r[4].w[0];
-        const bool was = ps2::ld32(self + kVoiceObjListeningOff) == 1;
-        if (was) ps2::st32(self + kVoiceObjListeningOff, 0);
-        std::fprintf(stderr, "[voice] f%llu game voice object %s\n", (unsigned long long)now(),
-                     was ? "was listening, reset to idle" : "idle");
-    } else std::fprintf(stderr, "[voice] f%llu game voice object reset skipped (expired or listening)\n", (unsigned long long)now());
+    if (g_listen_reset.armed()) {
+        if (g_listen_reset.on_execute(now(), g_listening)) {
+            const std::uint32_t self = c.r[4].w[0];
+            const bool was = ps2::ld32(self + kVoiceObjListeningOff) == 1;
+            if (was) ps2::st32(self + kVoiceObjListeningOff, 0);
+            std::fprintf(stderr, "[voice] f%llu game voice object %s\n", (unsigned long long)now(),
+                         was ? "was listening, reset to idle" : "idle");
+            g_listen_reset.start_resync();
+        } else std::fprintf(stderr, "[voice] f%llu game voice object reset skipped (expired or listening)\n", (unsigned long long)now());
+    }
+    // Before Execute reads the pad: an idle flag plus the stale restored "Circle held" bit would start a listen
+    // (cmd 1) right after the load instead of on the press. Hold that bit to the real Circle until it catches up.
+    if (g_listen_reset.resyncing()) {
+        const std::uint32_t pad = ps2::ld32(kPadTable + 4 * kPadIndexVoice);
+        if (pad == 0) { g_listen_reset.cancel_resync(); return false; }
+        const std::uint32_t held = ps2::ld32(pad + kPadHeldOff);
+        const bool down = g_circle_down.load();
+        const std::uint32_t fixed = g_listen_reset.resync_held(held, kPadHeldCircle, down);
+        if (fixed != held) ps2::st32(pad + kPadHeldOff, fixed);
+        static bool told = false;   // log the hold once per load, not every frame
+        if (!g_listen_reset.resyncing()) {
+            told = false;
+            std::fprintf(stderr, "[voice] f%llu pad circle in sync (%s)\n", (unsigned long long)now(), down ? "real press" : "up");
+        } else if (fixed != held && !told) { told = true; std::fprintf(stderr, "[voice] f%llu pad circle: restored held, real up; kept up until a real press\n", (unsigned long long)now()); }
+    }
     return false;
 }
 
@@ -330,6 +348,9 @@ bool busy() {
 }  // namespace voice
 
 extern "C" bool lifeline_voice_busy() { return voice::busy(); }
+
+// Input layer, every frame: whether the game is fed Circle (push-to-talk) right now.
+extern "C" void lifeline_voice_pad_circle(bool held) { voice::g_circle_down.store(held); }
 
 // Emulation thread, while a slot is saved: the active context, stored next to the state ("" if unknown).
 extern "C" const char *lifeline_voice_context() {
