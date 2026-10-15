@@ -10,7 +10,7 @@ Headless helpers (no window):
   lifeline_launcher.py --set qol.resolution_scale=2 [--set ...]   edit config and exit
 Contains only our code; never bundles game data.
 """
-import argparse, configparser, hashlib, glob, os, shlex, subprocess, sys, tempfile, threading, time, urllib.request, zipfile, shutil
+import argparse, configparser, re, hashlib, glob, os, shlex, subprocess, sys, tempfile, threading, time, urllib.request, zipfile, shutil
 
 HOME = os.path.expanduser("~")
 WORK = os.environ.get("LIFELINE_WORK", os.path.join(HOME, "lifeline-recomp"))
@@ -330,7 +330,7 @@ def value_of(c, key):
     if key.startswith("qol:"):
         k = key[4:]; kind = next(q[2] for q in QOL if q[0] == k)
         if kind == "bool": return "ON" if c.get("qol", k) == "1" else "off"
-        return c.get("qol", k) + "x"
+        return c.get("qol", k) + ("x" if k == "resolution_scale" else "")
     if key.startswith("build:"):
         v = "ON" if c.getboolean("build", key[6:]) else "off"
         if key == "build:cpu_tuned" and cpu_changed(): v += " (rebuild: new CPU)"
@@ -343,6 +343,25 @@ def value_of(c, key):
     return ""
 
 
+ICON_NAME = re.compile(r"^[A-Za-z0-9_-]+$")   # same rule as run.sh for a [qol] button_icons pack name
+
+
+def choices(c, k):
+    """Values a choice item cycles through. For button_icons this adds installed packs (icons.local/<name> or
+    icons/<name> with an icons.txt) and a custom value already in config.ini, so saving never drops it; a
+    hand-set name with no pack on disk is kept until you cycle away from it."""
+    vals = list(next(q for q in QOL if q[0] == k)[2][1])
+    if k != "button_icons": return vals
+    for d in ("icons.local", "icons"):   # run.sh looks in icons.local/ first, then the shipped icons/
+        root = os.path.join(WORK, d)
+        if not os.path.isdir(root): continue
+        for n in sorted(os.listdir(root)):
+            if ICON_NAME.match(n) and os.path.isfile(os.path.join(root, n, "icons.txt")) and n not in vals: vals.append(n)
+    cur = c.get("qol", k)
+    if cur not in vals and ICON_NAME.match(cur): vals.append(cur)
+    return vals
+
+
 def activate(c, key, delta=1):
     """Toggle/cycle a setting. Returns True if changed."""
     if key.startswith("launch:"):
@@ -352,7 +371,7 @@ def activate(c, key, delta=1):
         if not q[3]: return False
         if q[2] == "bool": c.set("qol", k, "0" if c.get("qol", k) == "1" else "1")
         else:
-            vals = q[2][1]; i = vals.index(c.get("qol", k)) if c.get("qol", k) in vals else 0
+            vals = choices(c, k); i = vals.index(c.get("qol", k)) if c.get("qol", k) in vals else 0
             c.set("qol", k, vals[(i + delta) % len(vals)])
     elif key.startswith("build:"):
         k = key[6:]; c.set("build", k, "0" if c.getboolean("build", k) else "1")

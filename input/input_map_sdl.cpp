@@ -157,6 +157,46 @@ const Map &hotkey_map() {
     return gated;
 }
 
+// --- Diagnostic: raw joy: vs controller-name sources ---------------------------------------------------------
+// A raw joy:bN / joy:hN source and a named button (b, back, ...) can be the same physical input on one pad and
+// different ones on another. Once per pad, log how push-to-talk (circle) resolves and warn when a hotkey chord
+// reads the same physical input as push-to-talk under a different spelling (the launcher's warning only
+// compares spellings).
+std::string describe(const Source &s) {
+    switch (s.kind) {
+    case Kind::Button: { const char *n = SDL_GameControllerGetStringForButton(static_cast<SDL_GameControllerButton>(s.index)); return n ? n : "button?"; }
+    case Kind::Axis: { const char *n = SDL_GameControllerGetStringForAxis(static_cast<SDL_GameControllerAxis>(s.index)); return std::string(s.sign < 0 ? "-" : s.sign > 0 ? "+" : "") + (n ? n : "axis?"); }
+    case Kind::JoyButton: return "joy:b" + std::to_string(s.index);
+    case Kind::JoyAxis: return "joy:a" + std::to_string(s.index) + (s.sign < 0 ? "-" : s.sign > 0 ? "+" : "");
+    case Kind::JoyHat: return "joy:h" + std::to_string(s.index) + "." + (s.hat_mask == SDL_HAT_UP ? "up" : s.hat_mask == SDL_HAT_DOWN ? "down" : s.hat_mask == SDL_HAT_LEFT ? "left" : "right");
+    case Kind::Key: return "key:" + s.key;
+    }
+    return "?";
+}
+
+void log_source_kinds(SDL_GameController *pad, const Map &m) {
+    static SDL_JoystickID seen = -2;
+    SDL_Joystick *j = pad ? SDL_GameControllerGetJoystick(pad) : nullptr;
+    const SDL_JoystickID id = j ? SDL_JoystickInstanceID(j) : -1;
+    if (id == seen) return;
+    seen = id;
+    if (!pad) { std::fprintf(stderr, "[input] no game controller: joy:/named pad sources are idle, keys still work\n"); return; }
+    const char *name = SDL_GameControllerName(pad);
+    std::string talk;
+    for (const Source &s : m.src[kCircle]) {
+        const Source ph = physical(pad, s);
+        talk += (talk.empty() ? "" : ", ") + describe(s) + (same_source(ph, s) ? "" : " (= " + describe(ph) + ")");
+    }
+    std::fprintf(stderr, "[input] pad \"%s\": push-to-talk (circle) = %s\n", name ? name : "?", talk.empty() ? "none" : talk.c_str());
+    for (int h = 0; h < kHotkeyCount; ++h)
+        for (const Chord &c : m.hk[h])
+            for (const Source &k : c.keys)
+                for (const Source &s : m.src[kCircle])
+                    if (!same_source(k, s) && same_source(physical(pad, k), physical(pad, s)))
+                        std::fprintf(stderr, "[input] warning: %s uses %s, the same physical input as push-to-talk %s on this pad\n",
+                                     kHotkeyNames[h], describe(k).c_str(), describe(s).c_str());
+}
+
 // --- Save-state slots: decided here on the host thread, done by the runner at the next vblank ---
 std::atomic<bool> g_slot_busy{false};   // a request is queued or running
 
@@ -256,6 +296,7 @@ void request_slot(const SaveSlots &slots, SlotAction action, int slot) {
 extern "C" int lifeline_hotkeys(SDL_GameController *pad, const Uint8 *keys, std::uint16_t *buttons, float *quit_progress) {
     static HotkeyState state;
     const Map &m = hotkey_map();
+    log_source_kinds(pad, m);
     const unsigned fired = state.update(SDL_GetTicks(), m, [&](const Source &s) { return pressed(pad, keys, s, false) > 0; });
     const bool talk_held = *buttons & (1u << kCircle);   // before chord masking: the game sees push-to-talk
     *buttons &= static_cast<std::uint16_t>(~state.mask(m, [&](const Source &s) { return game_bits(pad, m, s); }));
