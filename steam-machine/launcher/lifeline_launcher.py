@@ -265,6 +265,8 @@ def install(job, c):
         ok = _stream(job, cmd)
         job.log("Installing run.sh and the launcher ...")
         _install_file(os.path.join(kit, "run.sh"), os.path.join(WORK, "run.sh"))
+        if os.path.isfile(os.path.join(kit, "vu-check.sh")):   # vu_fast check tool (older kits lack it)
+            _install_file(os.path.join(kit, "vu-check.sh"), os.path.join(WORK, "vu-check.sh"))
         inst = os.path.join(WORK, "launcher"); os.makedirs(inst, exist_ok=True)
         src = os.path.join(kit, "launcher") if os.path.isdir(os.path.join(kit, "launcher")) else HERE   # prefer the kit's (newer) copy
         for f in ("lifeline_launcher.py", "bindings.py", "launcher.sh"):

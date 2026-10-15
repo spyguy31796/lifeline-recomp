@@ -145,8 +145,9 @@ option is off (or `PS2_VU_FAST=0` is exported), the original interpreter runs. T
   path (the faster interpreter, or a build-time translated program), once on the original interpreter. It compares
   registers, flags, VU1 memory and the GS packets kicked (captured, not sent), logs the first mismatch per program key
   as `[vu-check] MISMATCH ...`, then keeps the original's result. A summary line is printed at exit.
-  `steam-machine/vu-check.sh STATE:END_FRAME ...` runs it headless on states made on this machine (refuses while
-  the game is open; logs in `logs/vu-check-*.log`).
+  `~/lifeline-recomp/vu-check.sh STATE:END_FRAME ...` (installed by Install / update) runs it headless on states made
+  on this machine; on SteamOS it enters the `lifeline-build` distrobox itself, like `run.sh` (refuses while the game is
+  open; logs in `logs/vu-check-*.log`).
 - **Self-test:** `PS2_VU_SELFTEST=<n> ps2run` runs n random VU1 programs (no game data) through both interpreters and
   exits 0 only if all match. `build.sh` runs it after the build (result in `build-progress.log`; a failure only warns,
   keep the toggle off). Standalone: `steam-machine/tests/test_vu_fast_selftest.sh <ps2run>`.
