@@ -11,5 +11,13 @@ if "$CXX" -std=c++20 -Wall -Wextra -I"$ROOT/fmv" "$ROOT/fmv/tests/test_fmv_skip.
 if "$CXX" -std=c++20 -Wall -Wextra -I"$ROOT/input" "$ROOT/input/input_map.cpp" "$ROOT/input/hotkeys.cpp" "$ROOT/input/tests/test_hotkeys.cpp" -o "$T/test_hotkeys" && "$T/test_hotkeys"; then :; else echo "FAILED: test_hotkeys"; fail=1; fi
 if "$CXX" -std=c++20 -Wall -Wextra -I"$ROOT/input" "$ROOT/input/input_map.cpp" "$ROOT/input/tests/test_input_map.cpp" -o "$T/test_input_map" && "$T/test_input_map"; then :; else echo "FAILED: test_input_map"; fail=1; fi
 bash "$ROOT/steam-machine/tests/test_vu_check.sh" >/dev/null || { echo "FAILED: test_vu_check.sh"; fail=1; }
-for t in "$ROOT"/steam-machine/launcher/tests/test_*.py; do python3 "$t" || { echo "FAILED: $(basename "$t")"; fail=1; }; done
+# Launcher tests: the launcher's own venv has pygame (test_bindings / test_play need it). LAUNCHER_PY overrides;
+# else $LIFELINE_WORK (default ~/lifeline-recomp)/launcher-venv/bin/python if it runs and imports pygame; else python3.
+PY="${LAUNCHER_PY:-}"
+if [ -z "$PY" ]; then
+  VPY="${LIFELINE_WORK:-$HOME/lifeline-recomp}/launcher-venv/bin/python"
+  if [ -x "$VPY" ] && "$VPY" -c "import pygame" >/dev/null 2>&1; then PY="$VPY"; else PY=python3; fi
+fi
+echo "launcher tests with: $PY"
+for t in "$ROOT"/steam-machine/launcher/tests/test_*.py; do "$PY" "$t" || { echo "FAILED: $(basename "$t")"; fail=1; }; done
 [ $fail = 0 ] && echo "run-unit-tests: all OK" || echo "run-unit-tests: FAILURES"; exit $fail

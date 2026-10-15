@@ -17,7 +17,8 @@ run() {   # run <log> <press-spec> [env...]
 }
 : > "$T/mc.ps2"
 run "$T/on.log" "${PRESS}:start:4" PS2_FMV_SKIP=1
-grep -q "^\[fmv\] skip on" "$T/on.log" && ok "FMV skip registered" || bad "no [fmv] skip on"
+n=$(grep -c "^\[fmv\] skip on" "$T/on.log" || true)
+[ "$n" = 1 ] && ok "FMV skip registered (logged once)" || bad "[fmv] skip on logged $n times (want 1)"
 grep -q "^\[fmv\] full-screen movie:" "$T/on.log" && ok "full-screen path: $(grep -m1 '^\[fmv\] full-screen movie:' "$T/on.log")" || bad "no full-screen movie log (caller gate?)"
 grep -q "^\[fmv\] skipped " "$T/on.log" && ok "movie skipped on Start: $(grep '^\[fmv\] skipped' "$T/on.log")" || bad "movie not skipped"
 grep -q "frame limit reached" "$T/on.log" && ok "emulation continued after skip" || bad "run did not finish"

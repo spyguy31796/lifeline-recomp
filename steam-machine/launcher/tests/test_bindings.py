@@ -113,7 +113,7 @@ cfg = configparser.ConfigParser()
 check(B.current(cfg, "hk_quit") == B.HOTKEY_DEFAULTS["hk_quit"], "hotkey default")
 B.set_binding(cfg, "hk_quit", "guide@2000"); env = B.to_env(cfg)
 check(";hk_fullscreen=%s;hk_quit=guide@2000;" % B.HOTKEY_DEFAULTS["hk_fullscreen"] in env, "hotkeys in PS2_INPUT_MAP: " + env[-80:])
-check(env.endswith(";hk_save=%s;hk_load=%s;hk_slot=%s" % (B.HOTKEY_DEFAULTS["hk_save"], B.HOTKEY_DEFAULTS["hk_load"], B.HOTKEY_DEFAULTS["hk_slot"])), "save-slot hotkeys in PS2_INPUT_MAP")
+check(";hk_save=%s;hk_load=%s;hk_slot=%s;" % (B.HOTKEY_DEFAULTS["hk_save"], B.HOTKEY_DEFAULTS["hk_load"], B.HOTKEY_DEFAULTS["hk_slot"]) in env, "save-slot hotkeys in PS2_INPUT_MAP")
 for k in ("hk_save", "hk_load", "hk_slot"):
     check(B.validate(k, B.HOTKEY_DEFAULTS[k]) == "" and B.push_to_talk_warning(cfg, k) == "", "%s default is valid and has no Circle" % k)
 check(B.HOLD_ON_CAPTURE["hk_load"] == 1000 and B.HOLD_ON_CAPTURE["hk_save"] == 500, "captured save/load chords get a hold")

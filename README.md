@@ -273,7 +273,11 @@ D-pad, L1/L2/L3, R1/R2/R3, START, SELECT and both sticks.
     raw inputs instead (`hk_quit = joy:b6&joy:b7@1500`).
   - The launcher warns when a hotkey chord uses a push-to-talk (Circle) input: pressed first it talks, pressed
     later it is held back while the chord is down.
-- Rebind them in Launcher → Controller bindings → **Hotkey: fullscreen** / **Hotkey: quit (hold)** (and the save-slot hotkeys): hold every
+    It compares spellings only, so `circle = joy:b1` with a chord on `b` is not caught there. At game start the
+    log shows how push-to-talk resolves on the connected pad (`[input] pad "...": push-to-talk (circle) = ...`)
+    and warns (`[input] warning: hk_... uses ..., the same physical input as push-to-talk ...`) when a chord reads
+    the same physical input under a different spelling.
+- Rebind them in Launcher → Controller bindings → **Hotkey: fullscreen** / **Hotkey: quit (hold)** (and the save-slot and **Hotkey: fast-forward (hold)** hotkeys): hold every
   button (or key) of the new chord together, then release; the first release binds them all (up to 4). A captured
   quit chord gets a 1.5 s hold. Holding a chord 4 s cancels. **Y** adds another chord, **X** disables the hotkey.
 - Stored in `config.ini [bindings]` as `hk_fullscreen` / `hk_quit` / `hk_ff` and passed in `PS2_INPUT_MAP` like the other

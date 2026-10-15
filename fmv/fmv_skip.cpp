@@ -3,6 +3,7 @@
 #include "ps2/generated.hpp"
 #include "ps2/memory.hpp"
 #include "ps2/system.hpp"
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -68,7 +69,8 @@ struct Registrar {
         const char *e = std::getenv("PS2_FMV_SKIP");
         if (!e || *e != '1') return;
         ps2::register_override(kPlayerUpdate, execute);
-        std::fprintf(stderr, "[fmv] skip on (Start)\n");
+        static std::atomic<bool> said{false};   // once per process, even if this registrar runs again
+        if (!said.exchange(true)) std::fprintf(stderr, "[fmv] skip on (Start)\n");
     }
 } g_registrar;
 }
