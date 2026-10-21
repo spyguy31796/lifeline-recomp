@@ -113,6 +113,27 @@ finally:
 ci = os.path.join(root, "cpuinfo"); open(ci, "w").write("model name\t: Test CPU\n"); os.environ["LIFELINE_CPUINFO"] = ci
 check(L.current_cpu() == "Test CPU", "LIFELINE_CPUINFO still overrides (tests)"); del os.environ["LIFELINE_CPUINFO"]
 
+# 4b) a running game is detected with tasklist (no /proc, no kill): parsing, and tasklist missing -> nothing blocks
+ran = []
+class R:
+    def __init__(self, out): self.stdout, self.returncode = out, 0
+def fake_run(out):
+    def f(cmd, **k): ran.append(list(cmd)); return R(out)
+    return f
+real_run = L.subprocess.run
+try:
+    L.subprocess.run = fake_run('"ps2run.exe","4321","Console","1","812,004 K"\r\n"ps2run.exe","77","Console","1","1,000 K"\r\n')
+    check(L.running_ps2run() == [4321, 77], "tasklist CSV -> ps2run pids")
+    check(ran[-1][:3] == ["tasklist", "/FI", "IMAGENAME eq ps2run.exe"], "uses tasklist with an image-name filter: %r" % ran[-1])
+    L.subprocess.run = fake_run("INFO: No tasks are running which match the specified criteria.\r\n")
+    check(L.running_ps2run() == [], "no match (INFO line) -> []")
+    L.subprocess.run = lambda cmd, **k: (_ for _ in ()).throw(FileNotFoundError("tasklist"))
+    check(L.running_ps2run() == [], "tasklist cannot run -> []")
+    check(all(c_[0] == "tasklist" for c_ in ran), "only tasklist is run (nothing is stopped): %r" % ran)
+    check("4321" in L.game_running_msg([4321]) and "close it first" in L.game_running_msg([4321]), "friendly message names the pid")
+finally:
+    L.subprocess.run = real_run
+
 # 5) kit search: windows/ with build.ps1 + install.ps1
 repo = os.path.join(root, "src", "lifeline-recomp"); kitw = os.path.join(repo, "windows")
 os.makedirs(os.path.join(repo, "steam-machine")); os.makedirs(kitw)
@@ -148,6 +169,7 @@ sys.exit(9)
 ''' % (sys.executable, calls))
 os.chmod(stub, 0o755)   # test scaffolding on the Linux host only
 L.powershell = lambda: stub
+L.running_ps2run = lambda: []   # game closed (tasklist itself is checked in 4b)
 iso = os.path.join(root, "my disc.iso"); open(iso, "wb").close()
 local = os.path.join(work, "voice-assets", "aliases.local.tsv"); os.makedirs(os.path.dirname(local), exist_ok=True)
 mine = b"\xef\xbb\xbf# my fixes\r\nword\tother words\r\n"; open(local, "wb").write(mine)
@@ -179,7 +201,14 @@ try:
         check(j.ok is False and n == want_calls, "%s=3 -> FAILED after %d PowerShell run(s) (got %d)" % (rcvar, want_calls, n))
         check(open(local, "rb").read() == mine, "%s failure: aliases.local.tsv still restored" % rcvar)
         check(any("Full log: " in l for l in j.lines), "%s failure: log path shown" % rcvar)
-    c.set("paths", "iso", os.path.join(root, "missing.iso")); os.remove(calls)
+    # game running -> Install / update refused before build.ps1 (it would replace ps2run.exe); nothing changed, nothing stopped
+    L.running_ps2run = lambda: [4321]; os.remove(calls); open(local, "wb").write(mine)
+    try: j = run_job(L, lambda j: L.install(j, c))
+    finally: L.running_ps2run = lambda: []
+    check(j.ok is False and not os.path.exists(calls), "ps2run running -> install FAILED before any PowerShell run")
+    check(any("already running (ps2run pid 4321)" in l for l in j.lines), "install shows the friendly game-running message")
+    check(open(local, "rb").read() == mine, "ps2run running: aliases.local.tsv untouched")
+    c.set("paths", "iso", os.path.join(root, "missing.iso"))
     j = run_job(L, lambda j: L.install(j, c))
     check(j.ok is False and not os.path.exists(calls), "missing ISO -> FAILED before any PowerShell run")
     c.set("paths", "iso", iso)
@@ -236,17 +265,27 @@ if pygame:
     modes = []; real_set_mode = pygame.display.set_mode
     pygame.display.set_mode = lambda size, flags=0, *a, **k: (modes.append(flags), real_set_mode(size))[1]
     B = pygame.CONTROLLERBUTTONDOWN
+    running = [[4321], []]   # 1st START: the game is still running -> refused; 2nd START: closed -> plays
+    L.running_ps2run = lambda: running.pop(0) if running else []
     plan = [[pygame.event.Event(B, button=pygame.CONTROLLER_BUTTON_DPAD_DOWN)], [pygame.event.Event(B, button=pygame.CONTROLLER_BUTTON_DPAD_UP)],
+            [pygame.event.Event(B, button=pygame.CONTROLLER_BUTTON_START)], "after-refused",
             [pygame.event.Event(B, button=pygame.CONTROLLER_BUTTON_START)], [], [pygame.event.Event(B, button=pygame.CONTROLLER_BUTTON_B)]]
+    refused_state = []
     real_get = pygame.event.get
     def fake_get(*a, **k):
         real_get()
-        return plan.pop(0) if plan else [pygame.event.Event(pygame.QUIT)]
+        if not plan: return [pygame.event.Event(pygame.QUIT)]
+        p = plan.pop(0)
+        if p == "after-refused":   # display still up and run.ps1 not started after the refused START
+            refused_state.append((pygame.display.get_surface() is not None, os.path.exists(calls))); return []
+        return p
     pygame.event.get = fake_get
     try: r = L.run_ui()
     finally: pygame.event.get = real_get; pygame.display.set_mode = real_set_mode; del os.environ["SteamTenfoot"]
     got = [json.loads(l) for l in open(calls)] if os.path.exists(calls) else []
     check(r == 0, "B quits the launcher")
+    check(refused_state == [(True, False)], "START while ps2run runs: refused, menu stays, nothing started: %r" % refused_state)
+    check(running == [], "game-running check made at each START")
     check(len(got) == 1 and got[0][2:5] == ["Bypass", "-File", os.path.join(work, "run.ps1")], "START ran run.ps1 through PowerShell once: %r" % got)
     check(modes and all(m & pygame.FULLSCREEN for m in modes), "SteamTenfoot=1 -> fullscreen launcher: %r" % modes)
     pygame.quit()

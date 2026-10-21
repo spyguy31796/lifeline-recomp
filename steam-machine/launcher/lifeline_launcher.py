@@ -95,6 +95,24 @@ def play_cmd(c, new_game=False):
     return a
 
 
+def running_ps2run():
+    """Windows: pids of running ps2run.exe processes (tasklist; no /proc). [] if none or if tasklist cannot run.
+    Only looked at, never stopped: the user closes the game."""
+    try:
+        r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ps2run.exe", "/FO", "CSV", "/NH"], capture_output=True, text=True,
+                           errors="replace", timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError): return []
+    pids = []
+    for line in r.stdout.splitlines():   # "ps2run.exe","1234","Console","1","123,456 K"; no match prints an INFO line
+        f = [x.strip('"') for x in line.strip().split('","')]
+        if len(f) > 1 and f[0].lower() == "ps2run.exe" and f[1].isdigit(): pids.append(int(f[1]))
+    return pids
+
+
+def game_running_msg(pids):
+    return "The game is already running (ps2run pid %s): close it first" % ", ".join(str(p) for p in pids)
+
+
 def play_env(c):
     e = dict(os.environ)
     if c.getboolean("launch", "voice_off"): e.setdefault("PS2_VOICE_OFF", "1")   # exported env wins (as in run.sh)
@@ -293,6 +311,8 @@ def _write_atomic(path, data):
 def install_win(job, c, kit, iso):
     """Windows: build.ps1 (ps2run.exe, lifeline.env.json), then install.ps1 (Vosk, model, voice assets, aliases with this
     Python (no -PyArgs: powershell -File drops empty arguments), run.ps1, icons, launcher files, launcher-venv only if missing). Same log/progress handling as Linux."""
+    pids = running_ps2run()
+    if pids: job.log(game_running_msg(pids) + "; nothing was changed"); return False   # build.ps1 would replace ps2run.exe
     prog = os.path.join(WORK, "build-progress.log")
     job.log("Building from your ISO (progress: build-progress.log)")
     if c.getboolean("build", "cpu_tuned"): job.log("Note: cpu_tuned is not applied on Windows yet (build.ps1 builds generic)")
@@ -481,6 +501,9 @@ def run_ui():
         if not en:
             msg = "Coming soon" if key.startswith("qol:") else "Install first"; return
         if key in ("play", "new"):
+            if WIN:   # a second instance would share saves/ and the memory card; never stop the running one
+                pids = running_ps2run()
+                if pids: msg = game_running_msg(pids); return
             pygame.display.quit()
             r = subprocess.call(play_cmd(c, new_game=(key == "new")), env=play_env(c))   # waits for the game
             msg = "" if r == 0 else "Game exited with code %d (%s --debug logs to logs/run-*.log)" % (r, RUN_SCRIPT)
