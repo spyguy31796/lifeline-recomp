@@ -149,25 +149,12 @@ if [ -z "${SKIP_VOSK:-}" ]; then
 fi
 phase vosk
 # --- Voice assets (context/word tables) extracted from YOUR ISO ---------------
-# voice/tools/{fat,arcx}.py have dev-box paths baked in; run them unmodified with
-# those three paths swapped for this machine's ISO / OS.FAT / output dir.
+# voice/tools/extract_assets.py runs voice/tools/{fat,arcx}.py with their baked-in dev-box paths
+# swapped for this machine's ISO / OS.FAT / output dir (shared with windows/install.ps1).
 ASSETS="$WORK/voice-assets"
 if [ ! -d "$ASSETS" ] || [ -z "$(ls -A "$ASSETS")" ]; then
   python3 -I "$SRC/scripts/disc.py" extract "$GAME/disc.iso" "$WORK/iso-meta" OS.FAT > /dev/null
-  python3 - "$V/tools" "$WORK/iso-meta/OS.FAT" "$(realpath "$GAME/disc.iso")" "$ASSETS" <<'PY'
-import os, sys
-tools, fat, iso, out = sys.argv[1:]
-src = open(os.path.join(tools, 'arcx.py')).read()
-fatsrc = open(os.path.join(tools, 'fat.py')).read().split('for e in ents')[0]
-src = src.replace("exec(open(os.path.join(os.path.dirname(__file__),'fat.py')).read().split('for e in ents')[0])", 'exec(FATSRC)')
-fatsrc = fatsrc.replace('<repo-root>/private/iso/OS.FAT', fat)
-src = src.replace('<repo-root>/dump/Life Line (USA).iso', iso).replace('<repo-root>/private/asr_files', out)
-g = {'__file__': os.path.join(tools, 'arcx.py'), '__name__': '__main__', 'FATSRC': fatsrc}
-import contextlib, io
-with contextlib.redirect_stdout(io.StringIO()):
-    exec(compile(src, 'arcx.py', 'exec'), g)
-print('voice assets:', len(os.listdir(out)), 'folders')
-PY
+  python3 "$V/tools/extract_assets.py" "$WORK/iso-meta/OS.FAT" "$(realpath "$GAME/disc.iso")" "$ASSETS"
 fi
 phase "voice assets"
 # --- Launcher config ---------------------------------------------------------
