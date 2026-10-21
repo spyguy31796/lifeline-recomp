@@ -2,7 +2,10 @@
 Pester-free checks for windows/install.ps1. Needs YOUR ISO (the real, sha-checked one; it is only hashed and read)
 and Python 3. Uses stub disc.py / arcx.py / fat.py / build_aliases.py (no game data), so no voice assets are really
 extracted; the real Vosk wheel and model are used (downloaded, or pass -WheelPath / -ModelZipPath).
-Everything is written to a fresh temp folder that is removed at the end. Never stops any process.
+Everything is written to a fresh temp folder that is removed at the end. It stops no process except its own
+ps2run stand-in (section 4), and only by that stand-in's PID if it has not exited by itself. A real game must be
+closed: install.ps1 refuses while any ps2run runs (on a shared Linux box, run this in its own PID namespace,
+e.g. unshare -Urpf --mount-proc pwsh ...).
   powershell -NoProfile -ExecutionPolicy Bypass -File windows\tests\test-install.ps1 -Iso "C:\path\to\your.iso"
   pwsh -NoProfile -File windows/tests/test-install.ps1 -Iso /path/to/your.iso -PyExe python3 -PyArgs ' ' -VenvPython /usr/bin/python3
 -VenvPython: a Python 3.10+ to test the real launcher-venv step with (creates a venv in the temp folder and pip-installs
