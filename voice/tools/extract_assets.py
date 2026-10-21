@@ -31,8 +31,10 @@ def main(argv):
     if len(argv) != 3:
         sys.exit(__doc__.strip().splitlines()[2])
     fat, iso, out = (os.path.abspath(a) for a in argv)
-    src = open(os.path.join(TOOLS, 'arcx.py')).read()
-    fatsrc = open(os.path.join(TOOLS, 'fat.py')).read().split('for e in ents')[0]
+    with open(os.path.join(TOOLS, 'arcx.py')) as f:
+        src = f.read()
+    with open(os.path.join(TOOLS, 'fat.py')) as f:
+        fatsrc = f.read().split('for e in ents')[0]
     src = _swap(src, FAT_EXEC, 'exec(FATSRC)', 'arcx.py')
     fatsrc = _swap(fatsrc, DEV_FAT, 'LIFELINE_FAT_PATH', 'fat.py')
     src = _swap(src, DEV_ISO, 'LIFELINE_ISO_PATH', 'arcx.py')
