@@ -157,7 +157,8 @@ New-Item -ItemType Directory -Force (Join-Path $Work 'saves'), (Join-Path $Work 
 # Note ISO is a default only: once the file has an ISO (from install.ps1 or an earlier build), -Iso does
 # not override it; this build reads -Iso, but launches keep the ISO in the file (edit the file to change it).
 . (Join-Path $Kit 'env-json.ps1')
-Merge-LifelineEnv -Path (Join-Path $Work 'lifeline.env.json') -Owned @{ SRC = $Src; PS2RUN = $Exe; ELF = $Elf } -Defaults @{
+# KIT = our repo root (the folder above windows\), the same form install.ps1 writes: the launcher finds KIT\windows\build.ps1.
+Merge-LifelineEnv -Path (Join-Path $Work 'lifeline.env.json') -Owned @{ SRC = $Src; PS2RUN = $Exe; ELF = $Elf; KIT = $OurCode } -Defaults @{
     ISO = $Iso; MEMCARD = (Join-Path $Work 'saves\lifeline.ps2')
     PS2_VOICE_VOSK_MODEL = (Join-Path $Work 'vosk\vosk-model-small-en-us-0.15'); PS2_VOICE_VOSK_LIB = (Join-Path $Work 'vosk\vosk\libvosk.dll')
     PS2_VOICE_ASSETS = (Join-Path $Work 'voice-assets') } | Out-Null

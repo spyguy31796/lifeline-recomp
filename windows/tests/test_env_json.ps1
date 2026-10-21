@@ -77,5 +77,36 @@ try {
     $bytes = [IO.File]::ReadAllBytes($f)
     Ok ((Read-Env $f).VOSK_DIR -eq 'C:/v' -and @(Get-ChildItem $T -Filter '*.bad-*').Count -eq 0) 'file with a UTF-8 BOM is merged, not backed up'
     Ok (-not ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB)) 'output is written without a BOM'
+
+    # 5. KIT: build.ps1 owns it (as install.ps1 does), so the launcher can find KIT\windows\build.ps1 + install.ps1
+    #    before install.ps1 has ever run. Both write the repo root (the folder above windows\).
+    $WIN = Split-Path -Parent $PSScriptRoot; $REPO = Split-Path -Parent $WIN
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $WIN 'build.ps1'), [ref]$null, [ref]$null)
+    $merge = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Merge-LifelineEnv' }, $true))
+    $ownedAst = $null
+    if ($merge.Count -eq 1) {
+        $els = $merge[0].CommandElements
+        for ($i = 0; $i -lt $els.Count - 1; $i++) { if ($els[$i] -is [Management.Automation.Language.CommandParameterAst] -and $els[$i].ParameterName -eq 'Owned') { $ownedAst = $els[$i + 1] } }
+    }
+    $kitVal = $null
+    if ($ownedAst -is [Management.Automation.Language.HashtableAst]) { foreach ($kv in $ownedAst.KeyValuePairs) { if ($kv.Item1.Extent.Text -eq 'KIT') { $kitVal = $kv.Item2.Extent.Text } } }
+    Ok ($merge.Count -eq 1 -and $kitVal -eq '$OurCode') "build.ps1: one Merge-LifelineEnv call, KIT = `$OurCode in -Owned (got: $kitVal)"
+    $assign = @{}
+    foreach ($a in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in @('$Kit', '$OurCode') }, $false)) { $assign[$a.Left.Extent.Text] = $a.Right.Extent.Text }
+    Ok ($assign['$Kit'] -eq 'Split-Path -Parent $PSCommandPath' -and $assign['$OurCode'] -eq 'Split-Path -Parent $Kit') 'build.ps1: $OurCode is the folder above the folder build.ps1 runs from'
+    $buildKit = Split-Path -Parent (Split-Path -Parent (Join-Path $WIN 'build.ps1'))   # what build.ps1 computes for this checkout
+    $instSrc = [IO.File]::ReadAllText((Join-Path $WIN 'install.ps1'))
+    Ok ($buildKit -eq $REPO -and $instSrc.Contains('$Kit = Split-Path -Parent $PSScriptRoot')) "build.ps1 KIT ($buildKit) = install.ps1's default -Kit (the repo root)"
+    # an existing file from install.ps1 (lowercase "kit", stale path) is updated by a rebuild; install keys are kept
+    Get-ChildItem $T -Filter '*.bad-*' | Remove-Item
+    [IO.File]::WriteAllText($f, '{"kit":"C:/old/checkout","VOSK_DIR":"C:/v","ISO":"E:/mine.iso"}')
+    Merge-LifelineEnv -Path $f -Owned ($owned2 + @{ KIT = $REPO }) -Defaults $defaults | Out-Null
+    $e = Read-Env $f; $names = @($e.PSObject.Properties | ForEach-Object Name)
+    Ok ($e.KIT -ceq $REPO -and $names -ccontains 'KIT' -and -not ($names -ccontains 'kit')) 'rebuild updates a stale lowercase "kit" to KIT = this checkout'
+    Ok ($e.VOSK_DIR -eq 'C:/v' -and $e.ISO -eq 'E:/mine.iso' -and $e.PS2RUN -eq 'C:/w2/ps2run.exe') 'KIT update keeps install.ps1 keys and updates the build keys'
+    # install.ps1 then writes the same KIT: no change, no duplicate key
+    Merge-LifelineEnv -Path $f -Owned @{ ISO = 'E:/mine.iso'; KIT = $REPO } -Defaults @{} | Out-Null
+    $names2 = @((Read-Env $f).PSObject.Properties | ForEach-Object Name)
+    Ok ((Read-Env $f).KIT -ceq $REPO -and @($names2 | Where-Object { $_ -eq 'KIT' }).Count -eq 1) 'build.ps1 and install.ps1 agree on KIT: one key, same value'
 } finally { Remove-Item -Recurse -Force $T }
 if ($script:fail) { Write-Host 'env-json tests: FAILURES'; exit 1 } else { Write-Host 'env-json tests passed'; exit 0 }
