@@ -1,4 +1,5 @@
 #include "audio_source.hpp"
+#include "env_path.hpp"
 #include "ps2/system.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -24,7 +25,7 @@
 #endif
 namespace voice {
 std::vector<std::int16_t> read_wav16k(const std::string &path) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(u8_path(path), std::ios::binary);
     std::vector<std::uint8_t> b((std::istreambuf_iterator<char>(f)), {});
     if (b.size() < 44 || std::memcmp(b.data(), "RIFF", 4) || std::memcmp(b.data() + 8, "WAVE", 4)) return {};
     auto u16 = [&](std::size_t o) { return std::uint16_t(b[o] | b[o + 1] << 8); };
@@ -105,8 +106,8 @@ private:
 }
 std::unique_ptr<AudioSource> make_audio_source_from_env() {
     std::vector<WavSource::Item> items;
-    if (const char *sched = std::getenv("PS2_VOICE_WAV_SCHEDULE")) {
-        std::ifstream f(sched);
+    if (const auto sched = env_utf8("PS2_VOICE_WAV_SCHEDULE")) {   // schedule lines hold UTF-8 paths
+        std::ifstream f(u8_path(*sched));
         for (std::string line; std::getline(f, line);) {
             if (line.empty() || line[0] == '#') continue;
             std::istringstream in(line); WavSource::Item i{}; in >> i.frame >> std::ws; std::getline(in, i.path);
@@ -114,9 +115,9 @@ std::unique_ptr<AudioSource> make_audio_source_from_env() {
         }
         return std::make_unique<WavSource>(std::move(items));
     }
-    if (const char *dir = std::getenv("PS2_VOICE_WAV_DIR")) {
+    if (const auto dir = env_utf8("PS2_VOICE_WAV_DIR")) {
         std::vector<std::string> v; std::error_code ec;
-        for (const auto &e : std::filesystem::directory_iterator(dir, ec)) if (e.path().extension() == ".wav") v.push_back(e.path().string());
+        for (const auto &e : std::filesystem::directory_iterator(u8_path(*dir), ec)) if (e.path().extension() == ".wav") v.push_back(path_utf8(e.path()));
         std::sort(v.begin(), v.end());
         for (auto &p : v) items.push_back({0, p});
         return std::make_unique<WavSource>(std::move(items));

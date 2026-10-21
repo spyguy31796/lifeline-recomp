@@ -18,9 +18,14 @@ PS2_VOICE_WAV_SCHEDULE, a file of "FRAME C:\path\clip.wav" lines, or PS2_VOICE_W
 files played in name order; 16 kHz mono 16-bit). To repeat the Linux recipe, pass the same save state,
 schedule, context and circle press as the private on-box notes:
   ... voice-smoke.ps1 -WavSchedule C:\path\sched.txt -State C:\path\your.state -Context <ctx> -Press <frame>:circle:60 -Frames <n>
+  -Context is required with -State: a loaded state does not carry the voice context, and without it the log
+  says "vosk: no vocabulary yet". Use the context the state was made in (see make-skip-state.sh), e.g. the
+  tutorial state saved at frame 17300:
+  ... voice-smoke.ps1 -State <tut_17300.state> -WavSchedule <sched: 17600 clip.wav> -Press 17701:circle:60 -Frames 17900 -Context 1000.a/os_999
   Checks the hook and backend lines (audio source wav), then prints the "cmd 1" / "cmd 2" lines and the
   recognition line (ACCEPT or REJECT, with conf=); compare frames and conf with the Linux run.
-  Needs PS2_VOICE_ASSETS to point at the voice assets extracted from your own disc.
+  Needs PS2_VOICE_ASSETS in lifeline.env.json, pointing at the voice assets extracted from your own disc
+  (mic mode does not need it).
 Exit code 0 = every check passed. The log is kept in <Work>\logs\voice-smoke-<time>.log (game-derived; keep it on this PC).
 #>
 param(
@@ -46,8 +51,15 @@ function Need([string]$k) {
 $exe = Need 'PS2RUN'; $elf = Need 'ELF'; $iso = Need 'ISO'
 if (Get-Process -Name ps2run -ErrorAction SilentlyContinue) { Write-Host 'FAIL: ps2run is running; close the game first (this script does not stop it)'; exit 2 }
 
-foreach ($k in 'PS2_VOICE_VOSK_MODEL', 'PS2_VOICE_VOSK_LIB', 'PS2_VOICE_ASSETS') { Set-Item "env:$k" (Need $k) }
+if ($State -and -not $Context) { Write-Host 'FAIL: -State needs -Context (a loaded state does not carry the voice context; see the help)'; exit 2 }
 $wav = [bool]($WavSchedule -or $WavDir)
+foreach ($k in 'PS2_VOICE_VOSK_MODEL', 'PS2_VOICE_VOSK_LIB') { Set-Item "env:$k" (Need $k) }
+# Voice assets (context names, phrase tables from your disc) are needed for the WAV recipe only; the mic check
+# runs without them. Use the value from the file when there is one, else leave the variable unset.
+$assets = $cfg.PSObject.Properties | Where-Object { $_.Name -eq 'PS2_VOICE_ASSETS' } | Select-Object -First 1
+if ($wav) { $env:PS2_VOICE_ASSETS = Need 'PS2_VOICE_ASSETS' }
+elseif ($assets -and $assets.Value) { $env:PS2_VOICE_ASSETS = [string]$assets.Value }
+else { Remove-Item env:PS2_VOICE_ASSETS -ErrorAction SilentlyContinue }
 Remove-Item env:PS2_VOICE_WAV_SCHEDULE, env:PS2_VOICE_WAV_DIR, env:PS2_VOICE_CONTEXT -ErrorAction SilentlyContinue
 if ($WavSchedule) { $env:PS2_VOICE_WAV_SCHEDULE = [IO.Path]::GetFullPath($WavSchedule) }
 elseif ($WavDir) { $env:PS2_VOICE_WAV_DIR = [IO.Path]::GetFullPath($WavDir) }

@@ -13,6 +13,7 @@
 #include "recognizer.hpp"
 #include "result_writer.hpp"
 #include "debug_log.hpp"
+#include "env_path.hpp"
 #include "vgp.hpp"
 
 #include "ps2/generated.hpp"
@@ -79,9 +80,9 @@ void load_once() {
     g.loaded = true;
     g.rec = make_vosk_recognizer();
     if (!g.rec) g.rec = make_null_recognizer();
-    if (const char *dir = std::getenv("PS2_VOICE_ASSETS")) {
+    if (const auto dir = env_utf8("PS2_VOICE_ASSETS")) {
         std::error_code ec;
-        for (const auto &e : std::filesystem::recursive_directory_iterator(dir, ec)) {
+        for (const auto &e : std::filesystem::recursive_directory_iterator(u8_path(*dir), ec)) {
             const auto ext = e.path().extension().string();
             if (ext != ".ctx" && ext != ".wrd") continue;
             std::ifstream f(e.path(), std::ios::binary);
@@ -90,8 +91,8 @@ void load_once() {
         }
         std::fprintf(stderr, "[voice] indexed %zu context files from PS2_VOICE_ASSETS\n", g.names.size());
     }
-    if (const char *path = std::getenv("PS2_VOICE_INJECT")) {
-        std::ifstream f(path);
+    if (const auto path = env_utf8("PS2_VOICE_INJECT")) {
+        std::ifstream f(u8_path(*path));
         for (std::string line; std::getline(f, line);) {
             if (line.empty() || line[0] == '#') continue;
             std::istringstream in(line);
@@ -124,17 +125,18 @@ void load_once() {
 // Until the matcher hook sees the guest VGP, take the phrase table from the user's own extracted
 // <archive>/<stem>.vgp for the active context (context names come from PS2_VOICE_ASSETS).
 void vocab_for_context() {
-    const char *dir = std::getenv("PS2_VOICE_ASSETS");
-    if (!dir || g.context.size() < 5 || g.context == g.vocab_from) return;
+    const auto dir_env = env_utf8("PS2_VOICE_ASSETS");
+    if (!dir_env || g.context.size() < 5 || g.context == g.vocab_from) return;
     g.vocab_from = g.context;
     std::string stem = g.context.substr(0, g.context.size() - 4);  // "<archive>/<name>"
-    std::string path = std::string(dir) + "/" + stem + ".vgp";
-    std::ifstream f(path, std::ios::binary);
+    const std::string &dir = *dir_env;
+    std::string path = dir + "/" + stem + ".vgp";
+    std::ifstream f(u8_path(path), std::ios::binary);
     // Room command contexts (ai_<room>) have no phrase table of their own; the game's matcher uses the
     // room's os_<room>.vgp from the same archive (verb / object / chat slot phrases).
     if (const auto slash = stem.rfind('/'); !f && stem.compare(slash + 1, 3, "ai_") == 0) {
-        path = std::string(dir) + "/" + stem.substr(0, slash + 1) + "os_" + stem.substr(slash + 4) + ".vgp";
-        f.open(path, std::ios::binary);
+        path = dir + "/" + stem.substr(0, slash + 1) + "os_" + stem.substr(slash + 4) + ".vgp";
+        f.open(u8_path(path), std::ios::binary);
     }
     if (!f) { std::fprintf(stderr, "[voice] no %s for vocabulary\n", path.c_str()); return; }
     std::vector<std::uint8_t> b((std::istreambuf_iterator<char>(f)), {});
