@@ -30,7 +30,11 @@ Set-StrictMode -Version 2
 if (-not $Work) { $Work = Join-Path $Root 'game' }
 if (-not $Llvm) { $Llvm = Join-Path $Root 'tools\llvm' }
 if (-not $Wgpu) { $Wgpu = Join-Path $Root 'deps\wgpu-native' }
-if (-not $Sdl2) { $Sdl2 = (Get-ChildItem -Directory (Join-Path $Root 'deps') -Filter 'SDL2-*' | Sort-Object Name | Select-Object -Last 1).FullName }
+if (-not $Sdl2) {   # newest deps\SDL2-*; a missing deps\ or no SDL2-* folder leaves it empty for the check below
+    $deps = Join-Path $Root 'deps'
+    $d = @(if (Test-Path -LiteralPath $deps) { Get-ChildItem -Directory -LiteralPath $deps -Filter 'SDL2-*' | Sort-Object Name })
+    $Sdl2 = if ($d.Count -gt 0) { $d[-1].FullName } else { '' }
+}
 if (-not $Python) { $Python = Join-Path $Root 'tools\python312\python.exe' }
 $Kit = Split-Path -Parent $PSCommandPath          # windows\
 $OurCode = Split-Path -Parent $Kit                # repo root: 00NN patches, voice\, input\, ...
@@ -59,7 +63,7 @@ if ($IsoSha256) {
     if ($h -ne $IsoSha256.ToLower()) { Fail "ISO sha256 $h does not match $IsoSha256" }
 }
 foreach ($p in @("$Llvm\bin\clang-cl.exe", "$Llvm\bin\lld-link.exe", "$Wgpu\lib\wgpu_native.lib", $Python)) { if (-not (Test-Path -LiteralPath $p)) { Fail "missing $p" } }
-if (-not $Sdl2 -or -not (Test-Path "$Sdl2\cmake")) { Fail "SDL2 VC package not found (-Sdl2)" }
+if (-not $Sdl2 -or -not (Test-Path -LiteralPath "$Sdl2\cmake")) { Fail "SDL2 VC package not found: put SDL2-devel-2.x-VC in $Root\deps\ or pass -Sdl2" }
 
 # --- MSVC environment for this process only (vcvars64 inside cmd /c; VS itself is not changed) ---
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -147,8 +151,12 @@ Phase 'ps2run'
 
 # --- Launch settings for run.ps1 (later milestone) / by hand ----------------------
 New-Item -ItemType Directory -Force (Join-Path $Work 'saves'), (Join-Path $Work 'logs') | Out-Null
-@{ SRC = $Src; PS2RUN = $Exe; ELF = $Elf; ISO = $Iso; MEMCARD = (Join-Path $Work 'saves\lifeline.ps2')
-   PS2_VOICE_VOSK_MODEL = (Join-Path $Work 'vosk\vosk-model-small-en-us-0.15'); PS2_VOICE_VOSK_LIB = (Join-Path $Work 'vosk\vosk\libvosk.dll')
-   PS2_VOICE_ASSETS = (Join-Path $Work 'voice-assets') } | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $Work 'lifeline.env.json')
+# Merge, don't rewrite: build.ps1 owns the build outputs; the rest are defaults that a value already in the file
+# (e.g. ISO / VOSK_DIR from install.ps1) wins over; unknown keys are kept.
+. (Join-Path $Kit 'env-json.ps1')
+Merge-LifelineEnv -Path (Join-Path $Work 'lifeline.env.json') -Owned @{ SRC = $Src; PS2RUN = $Exe; ELF = $Elf } -Defaults @{
+    ISO = $Iso; MEMCARD = (Join-Path $Work 'saves\lifeline.ps2')
+    PS2_VOICE_VOSK_MODEL = (Join-Path $Work 'vosk\vosk-model-small-en-us-0.15'); PS2_VOICE_VOSK_LIB = (Join-Path $Work 'vosk\vosk\libvosk.dll')
+    PS2_VOICE_ASSETS = (Join-Path $Work 'voice-assets') } | Out-Null
 $total = "== [time] total: $([int]$T0.Elapsed.TotalSeconds)s"; Write-Host $total; Add-Content $Prog $total
 Write-Host "== built. Launch: & `"$Exe`" `"$Elf`" --disc `"$Iso`" --memcard `"$(Join-Path $Work 'saves\lifeline.ps2')`" --window   (game-derived build; keep it on this PC)"
