@@ -21,6 +21,17 @@ extern "C" __attribute__((weak)) const char *lifeline_voice_context();
 extern "C" __attribute__((weak)) void lifeline_voice_after_load(const char *context);
 extern "C" __attribute__((weak)) void lifeline_voice_pad_circle(bool held);
 
+namespace {
+// Once at startup: which of the weak voice hooks above resolved (1) or stayed null (0), so a toolchain
+// that drops them (e.g. a weak reference not pulled in from an archive) shows up in the log.
+struct VoiceHookReport {
+    VoiceHookReport() {
+        std::fprintf(stderr, "[input] voice hooks: busy=%d context=%d after_load=%d pad_circle=%d\n", lifeline_voice_busy != nullptr,
+                     lifeline_voice_context != nullptr, lifeline_voice_after_load != nullptr, lifeline_voice_pad_circle != nullptr);
+    }
+} g_voice_hook_report;
+}  // namespace
+
 using namespace lifeline_input;
 
 namespace {
