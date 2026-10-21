@@ -128,7 +128,12 @@ try:
     L.subprocess.run = fake_run("INFO: No tasks are running which match the specified criteria.\r\n")
     check(L.running_ps2run() == [], "no match (INFO line) -> []")
     L.subprocess.run = lambda cmd, **k: (_ for _ in ()).throw(FileNotFoundError("tasklist"))
-    check(L.running_ps2run() == [], "tasklist cannot run -> []")
+    check(L.running_ps2run() is None, "tasklist cannot run -> None (check failed)")
+    class R3:
+        stdout, returncode = "ERROR: something", 1
+    L.subprocess.run = lambda cmd, **k: (ran.append(list(cmd)), R3())[1]
+    check(L.running_ps2run() is None, "tasklist error exit -> None")
+    check(L.game_running_msg(None).startswith("Could not check whether the game is running (tasklist failed)"), "check-failed message names tasklist")
     check(all(c_[0] == "tasklist" for c_ in ran), "only tasklist is run (nothing is stopped): %r" % ran)
     check("4321" in L.game_running_msg([4321]) and "close it first" in L.game_running_msg([4321]), "friendly message names the pid")
 finally:
@@ -208,6 +213,10 @@ try:
     check(j.ok is False and not os.path.exists(calls), "ps2run running -> install FAILED before any PowerShell run")
     check(any("already running (ps2run pid 4321)" in l for l in j.lines), "install shows the friendly game-running message")
     check(open(local, "rb").read() == mine, "ps2run running: aliases.local.tsv untouched")
+    L.running_ps2run = lambda: None; open(local, "wb").write(mine)
+    try: j = run_job(L, lambda j: L.install(j, c))
+    finally: L.running_ps2run = lambda: []
+    check(j.ok is False and not os.path.exists(calls) and any("Could not check" in l for l in j.lines), "tasklist failed -> install refused before any PowerShell run")
     c.set("paths", "iso", os.path.join(root, "missing.iso"))
     j = run_job(L, lambda j: L.install(j, c))
     check(j.ok is False and not os.path.exists(calls), "missing ISO -> FAILED before any PowerShell run")

@@ -12,7 +12,7 @@ def check(c, what):
     global fails
     if not c: fails += 1; print("FAIL:", what)
 
-# 1) running_ps2run: pgrep -x ps2run, parsed; pgrep missing -> []; nothing but pgrep is run
+# 1) running_ps2run: pgrep -x ps2run, parsed; pgrep missing or failing -> None (check failed); nothing but pgrep is run
 ran = []
 class R:
     def __init__(self, out): self.stdout, self.returncode = out, 0 if out else 1
@@ -23,11 +23,16 @@ try:
     L.subprocess.run = lambda cmd, **k: (ran.append(list(cmd)), R(""))[1]
     check(L.running_ps2run() == [], "no match -> []")
     L.subprocess.run = lambda cmd, **k: (_ for _ in ()).throw(FileNotFoundError("pgrep"))
-    check(L.running_ps2run() == [], "pgrep missing -> []")
+    check(L.running_ps2run() is None, "pgrep missing -> None (check failed)")
+    class R2:
+        stdout, returncode = "", 3
+    L.subprocess.run = lambda cmd, **k: (ran.append(list(cmd)), R2())[1]
+    check(L.running_ps2run() is None, "pgrep error exit (3) -> None")
     check(ran and all(c == ["pgrep", "-x", "ps2run"] for c in ran), "only 'pgrep -x ps2run' is run: %r" % ran)
 finally:
     L.subprocess.run = real_run
 check(L.game_running_msg([4321]) == "The game is already running (ps2run pid 4321): close it first", "message text")
+check(L.game_running_msg(None).startswith("Could not check whether the game is running (pgrep failed)"), "check-failed message")
 # a real (stand-in) process named ps2run is found and left running; we stop our own stand-in by its PID afterwards
 if shutil.which("pgrep"):
     d = tempfile.mkdtemp(); exe = os.path.join(d, "ps2run"); shutil.copy("/bin/sleep", exe)
@@ -53,6 +58,10 @@ while not j.done: time.sleep(0.02)
 check(j.ok is False and not os.path.exists(os.path.join(work, "build-ran")), "install refused, build.sh not run")
 check(any("already running (ps2run pid 4321)" in l and "nothing was changed" in l for l in j.lines), "install shows the message: %r" % j.lines)
 check(open(local, "rb").read() == b"mine\r\n", "aliases.local.tsv untouched")
+L.running_ps2run = lambda: None   # the check failed: refused too (unknown is not "not running")
+j = L.Job("Install / update", lambda j: L.install(j, c))
+while not j.done: time.sleep(0.02)
+check(j.ok is False and not os.path.exists(os.path.join(work, "build-ran")) and any("Could not check" in l for l in j.lines), "check failed -> install refused")
 
 # 3) the installed launcher gets launcher-requirements.txt from the kit's windows/ folder
 req = os.path.join(REPO, "windows", "launcher-requirements.txt")
@@ -76,9 +85,10 @@ except ImportError:
 if pygame:
     open(os.path.join(work, "lifeline.env"), "w").close(); runs = os.path.join(work, "runs")
     open(os.path.join(work, "run.sh"), "w").write('#!/bin/sh\necho x >> "%s"\n' % runs); os.chmod(os.path.join(work, "run.sh"), 0o755)
-    states = [[4321], []]; L.running_ps2run = lambda: states.pop(0) if states else []
+    states = [[4321], None, []]; L.running_ps2run = lambda: states.pop(0) if states else []
     B = pygame.CONTROLLERBUTTONDOWN; seen = []
-    plan = [[pygame.event.Event(B, button=pygame.CONTROLLER_BUTTON_START)], "check", [pygame.event.Event(B, button=pygame.CONTROLLER_BUTTON_START)], [],
+    plan = [[pygame.event.Event(B, button=pygame.CONTROLLER_BUTTON_START)], "check", [pygame.event.Event(B, button=pygame.CONTROLLER_BUTTON_START)], "check",
+            [pygame.event.Event(B, button=pygame.CONTROLLER_BUTTON_START)], [],
             [pygame.event.Event(B, button=pygame.CONTROLLER_BUTTON_B)]]
     real = pygame.event.get
     def fake(*a, **k):
@@ -90,7 +100,7 @@ if pygame:
     pygame.event.get = fake
     try: r = L.run_ui()
     finally: pygame.event.get = real
-    check(seen == [(True, False)], "START while ps2run runs: refused, menu stays, nothing started: %r" % seen)
+    check(seen == [(True, False), (True, False)], "START while ps2run runs / check failed: refused, menu stays, nothing started: %r" % seen)
     check(os.path.exists(runs) and open(runs).read().count("x") == 1, "START after the game closed runs run.sh once")
     check(r == 0 and states == [], "checked at each START; B quits")
 

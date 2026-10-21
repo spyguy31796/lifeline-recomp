@@ -96,13 +96,15 @@ def play_cmd(c, new_game=False):
 
 
 def running_ps2run():
-    """pids of running ps2run processes, only looked at, never stopped (the user closes the game). [] if none or if
-    the check cannot run. Windows: tasklist (no /proc). Linux: pgrep -x ps2run (distrobox shares the host's process list)."""
+    """pids of running ps2run processes, only looked at, never stopped (the user closes the game). [] if none; None if
+    the check itself failed (callers then refuse too: unknown is not "not running").
+    Windows: tasklist (no /proc). Linux: pgrep -x ps2run (distrobox shares the host's process list)."""
     if WIN:
         try:
             r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ps2run.exe", "/FO", "CSV", "/NH"], capture_output=True, text=True,
                                errors="replace", timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except (OSError, subprocess.SubprocessError): return []
+        except (OSError, subprocess.SubprocessError): return None
+        if r.returncode != 0: return None
         pids = []
         for line in r.stdout.splitlines():   # "ps2run.exe","1234","Console","1","123,456 K"; no match prints an INFO line
             f = [x.strip('"') for x in line.strip().split('","')]
@@ -110,11 +112,14 @@ def running_ps2run():
         return pids
     try:
         r = subprocess.run(["pgrep", "-x", "ps2run"], capture_output=True, text=True, errors="replace", timeout=15)
-    except (OSError, subprocess.SubprocessError): return []
+    except (OSError, subprocess.SubprocessError): return None
+    if r.returncode not in (0, 1): return None   # 1 = no match; 2/3 = pgrep error
     return [int(x) for x in r.stdout.split() if x.isdigit()]
 
 
 def game_running_msg(pids):
+    if pids is None:
+        return "Could not check whether the game is running (%s failed): close the game if it is open and try again" % ("tasklist" if WIN else "pgrep")
     return "The game is already running (ps2run pid %s): close it first" % ", ".join(str(p) for p in pids)
 
 
@@ -334,7 +339,7 @@ def install(job, c):
     job.file("kit=%s iso=%s work=%s launcher=%s cwd=%s python=%s" % (kit, iso, WORK, HERE, os.getcwd(), sys.executable))
     if not os.path.isfile(iso): job.log("ISO not found: " + iso); return False
     pids = running_ps2run()   # build.sh / build.ps1 would replace the running ps2run
-    if pids: job.log(game_running_msg(pids) + "; nothing was changed"); return False
+    if pids is None or pids: job.log(game_running_msg(pids) + "; nothing was changed"); return False
     local = os.path.join(WORK, "voice-assets", "aliases.local.tsv")
     keep = open(local, "rb").read() if os.path.exists(local) else None
     try:
@@ -510,7 +515,7 @@ def run_ui():
             msg = "Coming soon" if key.startswith("qol:") else "Install first"; return
         if key in ("play", "new"):
             pids = running_ps2run()   # a second instance would share saves/ and the memory card; never stop the running one
-            if pids: msg = game_running_msg(pids); return
+            if pids is None or pids: msg = game_running_msg(pids); return
             pygame.display.quit()
             r = subprocess.call(play_cmd(c, new_game=(key == "new")), env=play_env(c))   # waits for the game
             msg = "" if r == 0 else "Game exited with code %d (%s --debug logs to logs/run-*.log)" % (r, RUN_SCRIPT)
