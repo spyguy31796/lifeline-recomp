@@ -8,8 +8,8 @@
 #include <fstream>
 #include <mutex>
 #include <sstream>
-#if defined(PS2_WINDOW) && __has_include(<SDL.h>)
-#include <SDL.h>   // SDL2 include dir (SDL2::SDL2 on Linux and in the Windows VC package)
+#if defined(PS2_WINDOW) && __has_include(<SDL2/SDL.h>)
+#include <SDL2/SDL.h>
 #define VOICE_HAVE_SDL 1
 #endif
 namespace voice {

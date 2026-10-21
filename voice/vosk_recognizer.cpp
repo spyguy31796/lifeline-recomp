@@ -1,15 +1,10 @@
 // Vosk (Apache-2.0) backend. libvosk is loaded at run time so the build has no hard dependency.
-// Environment: PS2_VOICE_VOSK_LIB (default libvosk.so, libvosk.dll on Windows), PS2_VOICE_VOSK_MODEL (model directory, required).
+// Environment: PS2_VOICE_VOSK_LIB (default libvosk.so), PS2_VOICE_VOSK_MODEL (model directory, required).
 #include "audio_source.hpp"
 #include "recognizer.hpp"
 #include "speech_forms.hpp"
 #include "slot_match.hpp"
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#include <string>
-#else
+#ifndef _WIN32
 #include <dlfcn.h>
 #endif
 #include <chrono>
@@ -20,28 +15,6 @@
 #include <sstream>
 namespace voice {
 namespace {
-#ifdef _WIN32
-// libvosk.dll (MinGW build) needs libstdc++-6/libgcc_s_seh-1/libwinpthread-1.dll from its own folder.
-void *lib_open(const char *path) {
-    const int n = MultiByteToWideChar(CP_UTF8, 0, path, -1, nullptr, 0);
-    std::wstring w(n > 0 ? n - 1 : 0, L'\0');
-    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, path, -1, w.data(), n);
-    HMODULE m = LoadLibraryExW(w.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-    if (!m) m = LoadLibraryW(w.c_str());   // a bare name (no folder): normal search order
-    if (!m) std::fprintf(stderr, "[voice] vosk: cannot load %s (error %lu)\n", path, GetLastError());
-    return reinterpret_cast<void *>(m);
-}
-void *lib_sym(void *h, const char *n) { return reinterpret_cast<void *>(GetProcAddress(static_cast<HMODULE>(h), n)); }
-constexpr const char *kDefaultLib = "libvosk.dll";
-#else
-void *lib_open(const char *path) {
-    void *h = dlopen(path, RTLD_NOW);
-    if (!h) std::fprintf(stderr, "[voice] vosk: %s\n", dlerror());
-    return h;
-}
-void *lib_sym(void *h, const char *n) { return dlsym(h, n); }
-constexpr const char *kDefaultLib = "libvosk.so";
-#endif
 struct Api {
     void *h = nullptr;
     void *(*model_new)(const char *);
@@ -52,9 +25,14 @@ struct Api {
     void (*rec_free)(void *);
     void (*set_log_level)(int);
     bool load(const char *lib) {
-        h = lib_open(lib);
-        if (!h) return false;
-        auto sym = [&](const char *n) { void *p = lib_sym(h, n); if (!p) std::fprintf(stderr, "[voice] vosk: missing %s\n", n); return p; };
+#ifdef _WIN32
+        // Windows build (M-W1) runs with voice off; the LoadLibrary loader is Voice's M-W2 item.
+        std::fprintf(stderr, "[voice] vosk: no Windows loader yet, %s not loaded\n", lib);
+        return false;
+#else
+        h = dlopen(lib, RTLD_NOW);
+        if (!h) { std::fprintf(stderr, "[voice] vosk: %s\n", dlerror()); return false; }
+        auto sym = [&](const char *n) { void *p = dlsym(h, n); if (!p) std::fprintf(stderr, "[voice] vosk: missing %s\n", n); return p; };
         model_new = (decltype(model_new))sym("vosk_model_new");
         rec_new_grm = (decltype(rec_new_grm))sym("vosk_recognizer_new_grm");
         rec_set_words = (decltype(rec_set_words))sym("vosk_recognizer_set_words");
@@ -63,6 +41,7 @@ struct Api {
         rec_free = (decltype(rec_free))sym("vosk_recognizer_free");
         set_log_level = (decltype(set_log_level))sym("vosk_set_log_level");
         return model_new && rec_new_grm && rec_set_words && accept_s && final_result && rec_free && set_log_level;
+#endif
     }
 };
 std::string json_str(const std::string &j, const std::string &key) {
@@ -186,7 +165,7 @@ std::unique_ptr<Recognizer> make_vosk_recognizer() {
     if (!model_dir) return nullptr;
     const char *lib = std::getenv("PS2_VOICE_VOSK_LIB");
     Api api;
-    if (!api.load(lib ? lib : kDefaultLib)) return nullptr;
+    if (!api.load(lib ? lib : "libvosk.so")) return nullptr;
     api.set_log_level(-1);
     void *model = api.model_new(model_dir);
     if (!model) { std::fprintf(stderr, "[voice] vosk: cannot load model %s\n", model_dir); return nullptr; }
