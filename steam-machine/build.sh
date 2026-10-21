@@ -47,7 +47,8 @@ PATCHES=(0001-usbmic-hle-and-deci2-nohost.patch 0002-ee-overrides-and-voice-stag
          0007-save-state-slots.patch 0008-texture-upload-hook.patch
          0009-widescreen-present.patch
          0010-fast-forward.patch
-         0011-pad-buttons-getter.patch)
+         0011-pad-buttons-getter.patch
+         0012-windows-build.patch)
 if [ ! -d "$SRC/.git" ]; then
   git clone "$UPSTREAM" "$SRC"
   git -C "$SRC" checkout --detach "$COMMIT"

@@ -4,7 +4,9 @@
 #include "recognizer.hpp"
 #include "speech_forms.hpp"
 #include "slot_match.hpp"
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -23,6 +25,11 @@ struct Api {
     void (*rec_free)(void *);
     void (*set_log_level)(int);
     bool load(const char *lib) {
+#ifdef _WIN32
+        // Windows build (M-W1) runs with voice off; the LoadLibrary loader is Voice's M-W2 item.
+        std::fprintf(stderr, "[voice] vosk: no Windows loader yet, %s not loaded\n", lib);
+        return false;
+#else
         h = dlopen(lib, RTLD_NOW);
         if (!h) { std::fprintf(stderr, "[voice] vosk: %s\n", dlerror()); return false; }
         auto sym = [&](const char *n) { void *p = dlsym(h, n); if (!p) std::fprintf(stderr, "[voice] vosk: missing %s\n", n); return p; };
@@ -34,6 +41,7 @@ struct Api {
         rec_free = (decltype(rec_free))sym("vosk_recognizer_free");
         set_log_level = (decltype(set_log_level))sym("vosk_set_log_level");
         return model_new && rec_new_grm && rec_set_words && accept_s && final_result && rec_free && set_log_level;
+#endif
     }
 };
 std::string json_str(const std::string &j, const std::string &key) {

@@ -402,6 +402,8 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `input/` | Controller remap layer and hotkeys (`PS2_INPUT_MAP` parser, chord/hold state, SDL apply) and their unit tests |
 | `steam-machine/launcher/` | Controller launcher: install/update, QoL toggles (`config.ini`), launch options |
 | `steam-machine/cpu_flags.sh` | CPU-tuned build flags (`[build] cpu_tuned`) with generic fallback; test in `steam-machine/tests/` |
+| `0012-windows-build.patch` | Patch for ps2-web-recomp: Windows build (Win32 window handle for the WebGPU surface, Windows process stats for the perf log, CMake for the Windows wgpu-native/SDL2 packages and clang-cl, 16 MB thread stacks); no effect on Linux |
+| `windows/build.ps1` | Windows build core (work in progress, voice not yet ported): clang-cl + lld-link + Ninja in a per-process VS dev environment, same pinned upstream and patch list as `build.sh` |
 
 ## License
 Our code is MIT (see `LICENSE`). ps2-web-recomp is MIT and is not vendored: `build.sh` clones it and applies our patches.
