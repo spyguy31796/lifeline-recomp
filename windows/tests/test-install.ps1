@@ -3,7 +3,7 @@ Pester-free checks for windows/install.ps1. Needs YOUR ISO (the real, sha-checke
 and Python 3. Uses stub disc.py / arcx.py / fat.py / build_aliases.py (no game data), so no voice assets are really
 extracted; the real Vosk wheel and model are used (downloaded, or pass -WheelPath / -ModelZipPath).
 Everything is written to a fresh temp folder that is removed at the end. Never stops any process.
-  powershell -NoProfile -ExecutionPolicy Bypass -File windows\tests\test-install.ps1 -Iso "C:\...\Life Line (USA).iso"
+  powershell -NoProfile -ExecutionPolicy Bypass -File windows\tests\test-install.ps1 -Iso "C:\path\to\your.iso"
   pwsh -NoProfile -File windows/tests/test-install.ps1 -Iso /path/to/your.iso -PyExe python3 -PyArgs ' '
 #>
 param([Parameter(Mandatory = $true)][string]$Iso, [string]$PyExe = 'py', [string]$PyArgs = '-3', [string]$WheelPath, [string]$ModelZipPath, [switch]$Keep)

@@ -68,6 +68,7 @@ if ($_m) { $SH['PS2_VOICE_VOSK_MODEL'] = $_m }; if ($_l) { $SH['PS2_VOICE_VOSK_L
 
 # --- config.ini (env wins: every value is applied like := ) ---
 $CFG = EnvVal 'LIFELINE_CONFIG'; if (-not $CFG) { $CFG = Join-Path $HERE 'config.ini' }
+$CFG = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($CFG)   # full path for [IO.File]
 $CFG_LINES = @(); if (Test-Path -LiteralPath $CFG -PathType Leaf) { $CFG_LINES = [IO.File]::ReadAllLines($CFG) }
 # Same rules as run.sh's awk: section line must be exactly [name]; key = text before the first '=' with blanks
 # removed; value = text between the first and second '=', cut at ' #' / ' ;', trimmed; first match wins.

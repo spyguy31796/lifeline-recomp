@@ -56,7 +56,7 @@ function Say([string]$m) { Write-Host $m; if ($script:LOG) { Add-Content -Litera
 function Die([string]$m, [int]$code = 1) { Say "ERROR: $m"; exit $code }
 function Plan([string]$m) { if ($DryRun) { Say "  [dry-run] would $m" } else { Say "  $m" } }
 function Sha256([string]$p) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLowerInvariant() }
-function FullPath([string]$p) { return [IO.Path]::GetFullPath($p) }
+function FullPath([string]$p) { return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p) }   # relative to the PowerShell location (GetFullPath would use the process cwd)
 function Is-Empty-Dir([string]$d) { return (-not (Test-Path -LiteralPath $d -PathType Container)) -or (@(Get-ChildItem -LiteralPath $d -Force).Count -eq 0) }
 function Need-Space([string]$dir, [int]$mb) {
     $free = (New-Object IO.DriveInfo ([IO.Path]::GetPathRoot((FullPath $dir)))).AvailableFreeSpace
@@ -79,6 +79,9 @@ function Use-Local([string]$path, [string]$sha, [string]$what) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Die "$what not found: $path" }
     $got = Sha256 $path; if ($got -ne $sha) { Die "sha256 mismatch for $what ${path}: got $got" }
 }
+# lifeline.env.json merge: the shared helper next to this script (also used by build.ps1). Atomic File.Replace/Move,
+# full paths, case-insensitive keys, unique .bad-* backups, ConvertTo-Json -Depth 10, UTF-8 without BOM.
+. (Join-Path $PSScriptRoot 'env-json.ps1')
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
@@ -239,20 +242,13 @@ try {
     }
 
     # --- Step 5: launch config + run.ps1 + shipped icon packs -------------------------------------
-    # lifeline.env.json is build.ps1's file: keep its keys (SRC, PS2RUN, ELF, ...), set ours, write it back.
+    # lifeline.env.json is shared with build.ps1 (it owns SRC, PS2RUN, ELF); we own the voice keys and ISO.
     $envf = Join-Path $Root 'lifeline.env.json'
-    $set = [ordered]@{
+    $set = @{
         'ISO' = $Iso; 'VOSK_DIR' = $VOSK
         'PS2_VOICE_VOSK_MODEL' = $MODELDIR; 'PS2_VOICE_VOSK_LIB' = (Join-Path $VOSKLIB 'libvosk.dll'); 'PS2_VOICE_ASSETS' = $ASSETS
     }
-    $kv = [ordered]@{}
-    if (Test-Path -LiteralPath $envf -PathType Leaf) {
-        $j = [IO.File]::ReadAllText($envf) | ConvertFrom-Json
-        foreach ($pr in $j.PSObject.Properties) { $kv[$pr.Name] = $pr.Value }
-    }
-    foreach ($k in $set.Keys) { $kv[$k] = $set[$k] }
-    if (-not $kv.Contains('MEMCARD')) { $kv['MEMCARD'] = Join-Path (Join-Path $Root 'saves') 'lifeline.ps2' }
-    $text = (New-Object PSObject -Property $kv | ConvertTo-Json) + "`r`n"
+    $defaults = @{ 'MEMCARD' = (Join-Path (Join-Path $Root 'saves') 'lifeline.ps2') }
     $runSrc = Join-Path (Join-Path $Kit 'windows') 'run.ps1'; $runDst = Join-Path $Root 'run.ps1'
     $packs = Join-Path (Join-Path $Kit 'icons') 'packs'
     if ($DryRun) {
@@ -260,9 +256,9 @@ try {
         Plan "copy $runSrc -> $runDst"
         Plan "replace $(Join-Path $Root 'icons') with $packs (icons.local is never touched)"
     } else {
-        $tmp = "$envf.tmp"; [IO.File]::WriteAllText($tmp, $text, (New-Object System.Text.UTF8Encoding($false))); Move-Item -LiteralPath $tmp -Destination $envf -Force
-        $back = [IO.File]::ReadAllText($envf) | ConvertFrom-Json
-        foreach ($k in $kv.Keys) { if ([string]$back.$k -cne [string]$kv[$k]) { Die "verify failed: $envf ($k)" } }
+        $kv = Merge-LifelineEnv -Path $envf -Owned $set -Defaults $defaults
+        $back = [IO.File]::ReadAllText((FullPath $envf)) | ConvertFrom-Json
+        foreach ($k in $set.Keys) { if ([string]$back.$k -cne [string]$set[$k]) { Die "verify failed: $envf ($k)" } }
         Say "  wrote $envf"
         if (Test-Path -LiteralPath $runSrc -PathType Leaf) {
             Copy-Item -LiteralPath $runSrc -Destination $runDst -Force
