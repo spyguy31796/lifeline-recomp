@@ -20,7 +20,8 @@ schedule, context and circle press as the private on-box notes:
   ... voice-smoke.ps1 -WavSchedule C:\path\sched.txt -State C:\path\your.state -Context <ctx> -Press <frame>:circle:60 -Frames <n>
   Checks the hook and backend lines (audio source wav), then prints the "cmd 1" / "cmd 2" lines and the
   recognition line (ACCEPT or REJECT, with conf=); compare frames and conf with the Linux run.
-  Needs PS2_VOICE_ASSETS to point at the voice assets extracted from your own disc.
+  Needs PS2_VOICE_ASSETS in lifeline.env.json, pointing at the voice assets extracted from your own disc
+  (mic mode does not need it).
 Exit code 0 = every check passed. The log is kept in <Work>\logs\voice-smoke-<time>.log (game-derived; keep it on this PC).
 #>
 param(
@@ -46,8 +47,14 @@ function Need([string]$k) {
 $exe = Need 'PS2RUN'; $elf = Need 'ELF'; $iso = Need 'ISO'
 if (Get-Process -Name ps2run -ErrorAction SilentlyContinue) { Write-Host 'FAIL: ps2run is running; close the game first (this script does not stop it)'; exit 2 }
 
-foreach ($k in 'PS2_VOICE_VOSK_MODEL', 'PS2_VOICE_VOSK_LIB', 'PS2_VOICE_ASSETS') { Set-Item "env:$k" (Need $k) }
 $wav = [bool]($WavSchedule -or $WavDir)
+foreach ($k in 'PS2_VOICE_VOSK_MODEL', 'PS2_VOICE_VOSK_LIB') { Set-Item "env:$k" (Need $k) }
+# Voice assets (context names, phrase tables from your disc) are needed for the WAV recipe only; the mic check
+# runs without them. Use the value from the file when there is one, else leave the variable unset.
+$assets = $cfg.PSObject.Properties | Where-Object { $_.Name -eq 'PS2_VOICE_ASSETS' } | Select-Object -First 1
+if ($wav) { $env:PS2_VOICE_ASSETS = Need 'PS2_VOICE_ASSETS' }
+elseif ($assets -and $assets.Value) { $env:PS2_VOICE_ASSETS = [string]$assets.Value }
+else { Remove-Item env:PS2_VOICE_ASSETS -ErrorAction SilentlyContinue }
 Remove-Item env:PS2_VOICE_WAV_SCHEDULE, env:PS2_VOICE_WAV_DIR, env:PS2_VOICE_CONTEXT -ErrorAction SilentlyContinue
 if ($WavSchedule) { $env:PS2_VOICE_WAV_SCHEDULE = [IO.Path]::GetFullPath($WavSchedule) }
 elseif ($WavDir) { $env:PS2_VOICE_WAV_DIR = [IO.Path]::GetFullPath($WavDir) }

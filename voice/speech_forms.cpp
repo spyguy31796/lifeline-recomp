@@ -1,4 +1,5 @@
 #include "speech_forms.hpp"
+#include "env_path.hpp"
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -109,11 +110,12 @@ std::string homophone_key(const std::string &spoken) {
 std::size_t load_aliases() {
     aliases().clear();
     std::vector<std::string> files;
-    if (const char *f = std::getenv("PS2_VOICE_ALIASES")) files.push_back(f);
-    else if (const char *d = std::getenv("PS2_VOICE_ASSETS")) files.push_back(std::string(d) + "/aliases.tsv");
-    if (const char *d = std::getenv("PS2_VOICE_ASSETS")) files.push_back(std::string(d) + "/aliases.local.tsv");  // user fixes win
+    const auto assets = env_utf8("PS2_VOICE_ASSETS");
+    if (const auto f = env_utf8("PS2_VOICE_ALIASES")) files.push_back(*f);
+    else if (assets) files.push_back(*assets + "/aliases.tsv");
+    if (assets) files.push_back(*assets + "/aliases.local.tsv");  // user fixes win
     for (const auto &path : files) {
-        std::ifstream in(path);
+        std::ifstream in(u8_path(path));
         std::size_t n = 0;
         for (std::string line; std::getline(in, line);) {
             if (line.empty() || line[0] == '#') continue;

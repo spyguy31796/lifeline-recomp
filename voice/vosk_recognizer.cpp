@@ -4,6 +4,7 @@
 #include "recognizer.hpp"
 #include "speech_forms.hpp"
 #include "slot_match.hpp"
+#include "env_path.hpp"
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -53,7 +54,15 @@ struct Api {
         final_result = (decltype(final_result))sym("vosk_recognizer_final_result");
         rec_free = (decltype(rec_free))sym("vosk_recognizer_free");
         set_log_level = (decltype(set_log_level))sym("vosk_set_log_level");
-        return model_new && rec_new_grm && rec_set_words && accept_s && final_result && rec_free && set_log_level;
+        if (model_new && rec_new_grm && rec_set_words && accept_s && final_result && rec_free && set_log_level) return true;
+        // A library without the full API is not used: unload it instead of leaking the handle.
+#ifdef _WIN32
+        FreeLibrary(static_cast<HMODULE>(h));
+#else
+        dlclose(h);
+#endif
+        h = nullptr;
+        return false;
     }
 #ifdef _WIN32
     // System message for a Win32 error code, without the trailing CR/LF.
@@ -226,9 +235,11 @@ private:
 };
 }
 std::unique_ptr<Recognizer> make_vosk_recognizer() {
-    const char *model_dir = std::getenv("PS2_VOICE_VOSK_MODEL");
-    if (!model_dir) return nullptr;
-    const char *lib = std::getenv("PS2_VOICE_VOSK_LIB");
+    const auto model_env = env_utf8("PS2_VOICE_VOSK_MODEL");  // UTF-8 (wide environment on Windows)
+    if (!model_env) return nullptr;
+    const char *model_dir = model_env->c_str();
+    const auto lib_env = env_utf8("PS2_VOICE_VOSK_LIB");
+    const char *lib = lib_env ? lib_env->c_str() : nullptr;
     Api api;
 #ifdef _WIN32
     constexpr const char *kDefaultLib = "libvosk.dll";
@@ -237,7 +248,11 @@ std::unique_ptr<Recognizer> make_vosk_recognizer() {
 #endif
     if (!api.load(lib ? lib : kDefaultLib)) return nullptr;
     api.set_log_level(-1);
-    void *model = api.model_new(model_dir);
+    // vosk_model_new takes a narrow path; on Windows that is the ANSI code page (or the 8.3 short name).
+    bool lossy = false;
+    const std::string model_arg = narrow_api_path(*model_env, &lossy);
+    if (lossy) std::fprintf(stderr, "[voice] vosk: model path %s has characters outside the ANSI code page and no short name; it may not load\n", model_dir);
+    void *model = api.model_new(model_arg.c_str());
     if (!model) { std::fprintf(stderr, "[voice] vosk: cannot load model %s\n", model_dir); return nullptr; }
     load_aliases();
     auto src = make_audio_source_from_env();
