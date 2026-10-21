@@ -197,6 +197,12 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     $okf = $true; foreach ($k in $lf.Keys) { $d = J $LDIR $k; if (-not (Test-Path $d) -or (Sha $d) -ne (Sha $lf[$k])) { $okf = $false } }
     Check ($okf -and (Count-In $LDIR) -eq 4) 'launcher files installed byte for byte (4 files, no temp left)'
     Check (-not (Test-Path $VENV)) 'no venv python -> no launcher-venv'
+    # unchanged launcher files are not rewritten (a running launcher.cmd is read as it goes); a changed one is replaced
+    $cmdf = J $LDIR 'launcher.cmd'; $old = [DateTime]::new(2001, 1, 1, 0, 0, 0, [DateTimeKind]::Utc); (Get-Item $cmdf).LastWriteTimeUtc = $old
+    [IO.File]::WriteAllText((J $LDIR 'bindings.py'), '# stale copy')
+    $o = & $INSTALL -Root $ROOT -Iso $Iso -Kit $KIT -Src $SRC -PyExe $PyExe -PyArgs $PyArgs -SkipVosk -VenvPython $noPy *>&1 | Out-String
+    Check ((Get-Item $cmdf).LastWriteTimeUtc -eq $old) 'unchanged launcher.cmd not rewritten on re-install'
+    Check ((Sha (J $LDIR 'bindings.py')) -eq (Sha $lf['bindings.py']) -and (Count-In $LDIR) -eq 4) 'changed bindings.py replaced (File.Replace), no temp left'
     $env:LIFELINE_WORK = $ROOT
     try {
         $o = & $psexe -NoProfile -ExecutionPolicy Bypass -File (J $LDIR 'launcher.ps1') --dry-run 2>&1 | Out-String
