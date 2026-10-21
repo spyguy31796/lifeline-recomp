@@ -96,17 +96,22 @@ def play_cmd(c, new_game=False):
 
 
 def running_ps2run():
-    """Windows: pids of running ps2run.exe processes (tasklist; no /proc). [] if none or if tasklist cannot run.
-    Only looked at, never stopped: the user closes the game."""
+    """pids of running ps2run processes, only looked at, never stopped (the user closes the game). [] if none or if
+    the check cannot run. Windows: tasklist (no /proc). Linux: pgrep -x ps2run (distrobox shares the host's process list)."""
+    if WIN:
+        try:
+            r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ps2run.exe", "/FO", "CSV", "/NH"], capture_output=True, text=True,
+                               errors="replace", timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.SubprocessError): return []
+        pids = []
+        for line in r.stdout.splitlines():   # "ps2run.exe","1234","Console","1","123,456 K"; no match prints an INFO line
+            f = [x.strip('"') for x in line.strip().split('","')]
+            if len(f) > 1 and f[0].lower() == "ps2run.exe" and f[1].isdigit(): pids.append(int(f[1]))
+        return pids
     try:
-        r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ps2run.exe", "/FO", "CSV", "/NH"], capture_output=True, text=True,
-                           errors="replace", timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        r = subprocess.run(["pgrep", "-x", "ps2run"], capture_output=True, text=True, errors="replace", timeout=15)
     except (OSError, subprocess.SubprocessError): return []
-    pids = []
-    for line in r.stdout.splitlines():   # "ps2run.exe","1234","Console","1","123,456 K"; no match prints an INFO line
-        f = [x.strip('"') for x in line.strip().split('","')]
-        if len(f) > 1 and f[0].lower() == "ps2run.exe" and f[1].isdigit(): pids.append(int(f[1]))
-    return pids
+    return [int(x) for x in r.stdout.split() if x.isdigit()]
 
 
 def game_running_msg(pids):
@@ -311,8 +316,6 @@ def _write_atomic(path, data):
 def install_win(job, c, kit, iso):
     """Windows: build.ps1 (ps2run.exe, lifeline.env.json), then install.ps1 (Vosk, model, voice assets, aliases with this
     Python (no -PyArgs: powershell -File drops empty arguments), run.ps1, icons, launcher files, launcher-venv only if missing). Same log/progress handling as Linux."""
-    pids = running_ps2run()
-    if pids: job.log(game_running_msg(pids) + "; nothing was changed"); return False   # build.ps1 would replace ps2run.exe
     prog = os.path.join(WORK, "build-progress.log")
     job.log("Building from your ISO (progress: build-progress.log)")
     if c.getboolean("build", "cpu_tuned"): job.log("Note: cpu_tuned is not applied on Windows yet (build.ps1 builds generic)")
@@ -330,6 +333,8 @@ def install(job, c):
     kit, iso = kit_dir(c), c.get("paths", "iso")
     job.file("kit=%s iso=%s work=%s launcher=%s cwd=%s python=%s" % (kit, iso, WORK, HERE, os.getcwd(), sys.executable))
     if not os.path.isfile(iso): job.log("ISO not found: " + iso); return False
+    pids = running_ps2run()   # build.sh / build.ps1 would replace the running ps2run
+    if pids: job.log(game_running_msg(pids) + "; nothing was changed"); return False
     local = os.path.join(WORK, "voice-assets", "aliases.local.tsv")
     keep = open(local, "rb").read() if os.path.exists(local) else None
     try:
@@ -357,6 +362,9 @@ def install(job, c):
         src = os.path.join(kit, "launcher") if os.path.isdir(os.path.join(kit, "launcher")) else HERE   # prefer the kit's (newer) copy
         for f in ("lifeline_launcher.py", "bindings.py", "launcher.sh"):
             job.file("  %s %s" % ("installed" if _install_file(os.path.join(src, f), os.path.join(inst, f)) else "already current (same file)", f))
+        req = os.path.join(os.path.dirname(kit), "windows", "launcher-requirements.txt")   # pinned pygame-ce, shared with Windows
+        if os.path.isfile(req):
+            job.file("  %s launcher-requirements.txt" % ("installed" if _install_file(req, os.path.join(inst, "launcher-requirements.txt")) else "already current (same file)"))
         job.log("Done." if ok else "Aliases step failed (game still playable).")
         return True
     finally:   # never lose the user's own alias fixes, whatever happened above
@@ -501,9 +509,8 @@ def run_ui():
         if not en:
             msg = "Coming soon" if key.startswith("qol:") else "Install first"; return
         if key in ("play", "new"):
-            if WIN:   # a second instance would share saves/ and the memory card; never stop the running one
-                pids = running_ps2run()
-                if pids: msg = game_running_msg(pids); return
+            pids = running_ps2run()   # a second instance would share saves/ and the memory card; never stop the running one
+            if pids: msg = game_running_msg(pids); return
             pygame.display.quit()
             r = subprocess.call(play_cmd(c, new_game=(key == "new")), env=play_env(c))   # waits for the game
             msg = "" if r == 0 else "Game exited with code %d (%s --debug logs to logs/run-*.log)" % (r, RUN_SCRIPT)

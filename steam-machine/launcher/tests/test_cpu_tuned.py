@@ -56,7 +56,7 @@ open(os.path.join(kit, "build.sh"), "w").write('#!/bin/bash\necho "build sees CP
 open(os.path.join(root, "kit", "voice", "tools", "build_aliases.py"), "w").write("pass\n")
 iso = os.path.join(root, "disc.iso"); open(iso, "w").close()
 for on in ("1", "0"):
-    L = fresh(work); L.shutil.which = lambda n: None
+    L = fresh(work); L.shutil.which = lambda n: None; L.running_ps2run = lambda: []   # independent of games running here
     c = L.load(); c.set("paths", "kit", kit); c.set("paths", "iso", iso); c.set("build", "cpu_tuned", on)
     j = L.Job("Install / update", lambda j: L.install(j, c))
     while not j.done: time.sleep(0.05)

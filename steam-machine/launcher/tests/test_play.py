@@ -10,6 +10,7 @@ with open(os.path.join(work, "run.sh"), "w") as f:   # 1st run exits 0 (hotkey q
 os.chmod(os.path.join(work, "run.sh"), 0o755)
 sys.argv = ["x"]; sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import pygame, lifeline_launcher as L
+L.running_ps2run = lambda: []   # independent of games running on this machine (test_game_running.py covers the check)
 fails = 0
 def check(c, what):
     global fails

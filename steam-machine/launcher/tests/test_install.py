@@ -27,6 +27,7 @@ def run_install(work, kit, iso):
     L = importlib.import_module("lifeline_launcher"); sys.path.pop(0)
     check(L.HERE == os.path.join(work, "launcher"), "running from the installed copy")
     L.shutil.which = lambda n: None                      # no distrobox in tests
+    L.running_ps2run = lambda: []                        # independent of games running on this machine
     c = L.load(); c.set("paths", "kit", kit); c.set("paths", "iso", iso)
     j = L.Job("Install / update", lambda j: L.install(j, c))
     while not j.done: time.sleep(0.05)

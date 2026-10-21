@@ -1,7 +1,18 @@
-# Launcher venv on Windows (install.ps1 creates <Root>\launcher-venv only if it is missing or has no pygame).
-# pygame-ce bundles SDL2, so gamepads (XInput, Steam Input) work through SDL GameController as on Linux.
-# Pinned and hash-checked (pip --require-hashes is implied by the hashes). The cp312 win_amd64 wheel is the one
-# Lifeline\tools\python312 uses; the cp313 manylinux x86_64 hash only lets the Linux test of install.ps1 run.
+# Launcher venv (pygame-ce bundles SDL2, so gamepads work through SDL GameController). One file for both systems:
+#   Windows: windows/install.ps1 creates <Root>\launcher-venv only if it is missing or has no pygame.
+#   Linux:   steam-machine/launcher/launcher.sh creates ~/lifeline-recomp/launcher-venv on first start.
+# Pinned and hash-checked (pip --require-hashes is implied by the hashes): the CPython 3.10-3.15 wheels of
+# pygame-ce 2.5.8 for win_amd64 and manylinux x86_64, digests from PyPI. pip --only-binary=:all: never builds from source.
 pygame-ce==2.5.8 \
+    --hash=sha256:15a408aa324c7d3f465a80595a0cf2525c74ef147479a7b37322dbc1d99b8edf \
+    --hash=sha256:0f75f6cf17607e380687aa5551c46aa830c8037b2950c71e48be8891ddc737da \
     --hash=sha256:2cfe8afe1e7955780f0bd4f01d65f1b4903f561407052081cfcec31e80957c3c \
-    --hash=sha256:5bb966b610e161a8f6d908b4c62ef3a1f3e922bc7bed73bd70a3e15dc780b90e
+    --hash=sha256:f495b0eb7a5c54c59da58e964bc7f68073c3f43cf307729fd48309104a04c190 \
+    --hash=sha256:b4c2e28c201240199356952e6bd0221969d2eb8a1a15c3454d77db209bad7891 \
+    --hash=sha256:5b789aa7e4239be025c9de8428c2c422f0811f0e3dd702b574d836fd9ae040eb \
+    --hash=sha256:6de2f738e0a6130f70ae47cf8da8845b2f228014f2c71b37477f10fb1febec5a \
+    --hash=sha256:33e1b5a78cd6d25c2c8f00c09cdc0ba8000eec81b53dc7d8d7323d8319691d69 \
+    --hash=sha256:bf9c8b4376077efec6ae31443172ae98545f278d0e4426852e81c28ab1f5d7c2 \
+    --hash=sha256:5bb966b610e161a8f6d908b4c62ef3a1f3e922bc7bed73bd70a3e15dc780b90e \
+    --hash=sha256:0027bd2255cbb39789d9c7ff95a5f040f56d1cfeb09504497447c0ee06169a24 \
+    --hash=sha256:d9cbf6e2648ae6d76aa8ece82187d240300cfd9f4c90860e1e466f78cf0ab14a
