@@ -8,8 +8,18 @@
 #include <fstream>
 #include <mutex>
 #include <sstream>
-#if defined(PS2_WINDOW) && __has_include(<SDL2/SDL.h>)
+// PS2_WINDOW means ps2run links SDL2 (CMake found it). The include dir differs by package: SDL2::SDL2 from
+// the Windows VC package (and sdl2-config on Linux) points at the folder holding SDL.h, a bare system
+// include path only has <SDL2/SDL.h>. A window build without either header is an error, not a silent
+// build without the microphone.
+#if defined(PS2_WINDOW)
+#if __has_include(<SDL.h>)
+#include <SDL.h>
+#elif __has_include(<SDL2/SDL.h>)
 #include <SDL2/SDL.h>
+#else
+#error "PS2_WINDOW is set but neither <SDL.h> nor <SDL2/SDL.h> is on the include path: the microphone source needs SDL2"
+#endif
 #define VOICE_HAVE_SDL 1
 #endif
 namespace voice {
@@ -59,13 +69,26 @@ private:
 class SdlSource final : public AudioSource {
 public:
     bool open() {
-        if (!(SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO) && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return false;
+        if (!(SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO) && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+            std::fprintf(stderr, "[voice] SDL capture: audio init failed: %s\n", SDL_GetError());
+            return false;
+        }
         SDL_AudioSpec want{}, have{};
         want.freq = 16000; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = 512;
         want.callback = [](void *u, Uint8 *s, int n) { static_cast<SdlSource *>(u)->push(reinterpret_cast<std::int16_t *>(s), n / 2); };
         want.userdata = this;
         dev_ = SDL_OpenAudioDevice(nullptr, 1, &want, &have, 0);
         if (!dev_) { std::fprintf(stderr, "[voice] SDL capture: %s\n", SDL_GetError()); return false; }
+        // nullptr opened the system default capture device; SDL >= 2.24 can report its name.
+        std::string dev = "(default)";
+#if SDL_VERSION_ATLEAST(2, 24, 0)
+        char *def = nullptr; SDL_AudioSpec def_spec{};
+        if (SDL_GetDefaultAudioInfo(&def, &def_spec, 1) == 0 && def) dev = std::string("(default) ") + def;
+        SDL_free(def);
+#endif
+        const char *drv = SDL_GetCurrentAudioDriver();
+        std::fprintf(stderr, "[voice] mic: SDL audio driver %s, capture device %s, %d Hz, format 0x%04X, %d ch, %d samples\n",
+                     drv ? drv : "(none)", dev.c_str(), have.freq, static_cast<unsigned>(have.format), int(have.channels), int(have.samples));
         return true;
     }
     ~SdlSource() override { if (dev_) SDL_CloseAudioDevice(dev_); }
@@ -101,6 +124,9 @@ std::unique_ptr<AudioSource> make_audio_source_from_env() {
 #ifdef VOICE_HAVE_SDL
     auto s = std::make_unique<SdlSource>();
     if (s->open()) return s;
+    std::fprintf(stderr, "[voice] mic: cannot open the microphone, voice input is off (audio source none)\n");
+#else
+    std::fprintf(stderr, "[voice] mic: this ps2run was built without SDL2, voice input is off (audio source none)\n");
 #endif
     return nullptr;
 }
