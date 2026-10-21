@@ -76,10 +76,12 @@ Phase deps
 # --- Source at the pinned commit + our patches (same list as steam-machine/build.sh) ---
 $Src = Join-Path $Work 'ps2-web-recomp'
 if (-not (Test-Path "$Src\.git")) {
-    Run git @('-c', 'core.autocrlf=false', 'clone', '-q', $Upstream, $Src)
+    # No checkout until core.autocrlf=false is set in this clone only (Git for Windows defaults to true
+    # system-wide, which would convert line endings and make the patches fail to apply).
+    Run git @('clone', '-q', '--no-checkout', $Upstream, $Src)
+    Run git @('-C', $Src, 'config', 'core.autocrlf', 'false')
     Run git @('-C', $Src, 'checkout', '-q', '--detach', $Commit)
 }
-Run git @('-C', $Src, 'config', 'core.autocrlf', 'false')   # this checkout only: patches apply byte for byte
 $bsh = Get-Content -Raw (Join-Path $OurCode 'steam-machine\build.sh')
 $list = [regex]::Match($bsh, '(?s)\nPATCHES=\((.*?)\)').Groups[1].Value
 $Patches = @([regex]::Matches(($list -replace '#[^\n]*', ''), '\d{4}-[A-Za-z0-9._-]+\.patch') | ForEach-Object { $_.Value })
