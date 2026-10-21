@@ -28,6 +28,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 if (-not $Work) { $Work = Join-Path $Root 'game' }
+$Work = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Work)   # full path (a relative -Work is fine)
 if (-not $Llvm) { $Llvm = Join-Path $Root 'tools\llvm' }
 if (-not $Wgpu) { $Wgpu = Join-Path $Root 'deps\wgpu-native' }
 if (-not $Sdl2) {   # newest deps\SDL2-*; a missing deps\ or no SDL2-* folder leaves it empty for the check below
@@ -153,6 +154,8 @@ Phase 'ps2run'
 New-Item -ItemType Directory -Force (Join-Path $Work 'saves'), (Join-Path $Work 'logs') | Out-Null
 # Merge, don't rewrite: build.ps1 owns the build outputs; the rest are defaults that a value already in the file
 # (e.g. ISO / VOSK_DIR from install.ps1) wins over; unknown keys are kept.
+# Note ISO is a default only: once the file has an ISO (from install.ps1 or an earlier build), -Iso does
+# not override it; this build reads -Iso, but launches keep the ISO in the file (edit the file to change it).
 . (Join-Path $Kit 'env-json.ps1')
 Merge-LifelineEnv -Path (Join-Path $Work 'lifeline.env.json') -Owned @{ SRC = $Src; PS2RUN = $Exe; ELF = $Elf } -Defaults @{
     ISO = $Iso; MEMCARD = (Join-Path $Work 'saves\lifeline.ps2')

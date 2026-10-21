@@ -43,6 +43,32 @@ try {
         Ok ($e.PS2RUN -eq 'C:/w/ps2run.exe' -and $e.ISO -eq 'C:/default.iso' -and @($e.PSObject.Properties).Count -eq 5) "${name}: fresh file with owned keys + defaults only"
     }
 
+    # 3b. two bad files in a row, with the clock frozen so both get the same timestamp: the counter keeps them apart
+    Get-ChildItem $T -Filter '*.bad-*' | Remove-Item
+    function Get-Date { '20260101-000000-000' }   # shadows the cmdlet for Merge-LifelineEnv
+    try {
+        [IO.File]::WriteAllText($f, 'bad one'); Merge-LifelineEnv -Path $f -Owned $owned1 -Defaults $defaults | Out-Null
+        [IO.File]::WriteAllText($f, 'bad two'); Merge-LifelineEnv -Path $f -Owned $owned1 -Defaults $defaults | Out-Null
+    } finally { Remove-Item Function:\Get-Date }
+    Ok ((Test-Path "$f.bad-20260101-000000-000") -and (Test-Path "$f.bad-20260101-000000-000-1")) 'same timestamp: second backup gets a -1 counter'
+    $bad = @(Get-ChildItem $T -Filter 'lifeline.env.json.bad-*' | ForEach-Object { [IO.File]::ReadAllText($_.FullName) } | Sort-Object)
+    Ok ($bad.Count -eq 2 -and $bad[0] -eq 'bad one' -and $bad[1] -eq 'bad two') 'two bad files in a row: two separate backups, both kept unchanged'
+
+    # 3c. keys match case-insensitively; owned/default keys are renamed to the canonical upper case
+    Get-ChildItem $T -Filter '*.bad-*' | Remove-Item
+    [IO.File]::WriteAllText($f, '{"iso":"E:/mine.iso","ps2run":"C:/old.exe","Vosk_Dir":"D:/v"}')
+    Merge-LifelineEnv -Path $f -Owned $owned1 -Defaults $defaults | Out-Null
+    $names = @((Read-Env $f).PSObject.Properties | ForEach-Object Name)
+    $e = Read-Env $f
+    Ok ($e.ISO -eq 'E:/mine.iso' -and $names -ccontains 'ISO' -and -not ($names -ccontains 'iso')) 'lowercase "iso" is treated as ISO (kept, not defaulted) and written as ISO'
+    Ok ($e.PS2RUN -eq 'C:/w/ps2run.exe' -and $names -ccontains 'PS2RUN' -and -not ($names -ccontains 'ps2run')) 'lowercase "ps2run" is the owned PS2RUN: updated and written as PS2RUN'
+    Ok ($names -ccontains 'Vosk_Dir' -and $names.Count -eq 6) 'a foreign key keeps its own case; no duplicate keys'
+
+    # 3d. a relative path is resolved against the current location
+    Push-Location $T
+    try { Merge-LifelineEnv -Path 'lifeline.env.json' -Owned $owned2 -Defaults $defaults | Out-Null } finally { Pop-Location }
+    Ok ((Read-Env $f).PS2RUN -eq 'C:/w2/ps2run.exe' -and -not (Test-Path "$f.tmp")) 'relative -Path: merged in place, no temp file left'
+
     # 4. UTF-8 BOM (Windows PowerShell 5.1 Set-Content -Encoding UTF8 writes one) is read, and output has no BOM
     $bom = [Text.Encoding]::UTF8.GetPreamble() + [Text.Encoding]::UTF8.GetBytes('{"VOSK_DIR":"C:/v"}')
     [IO.File]::WriteAllBytes($f, $bom)
