@@ -4,7 +4,7 @@ and Python 3. Uses stub disc.py / arcx.py / fat.py / build_aliases.py (no game d
 extracted; the real Vosk wheel and model are used (downloaded, or pass -WheelPath / -ModelZipPath).
 Everything is written to a fresh temp folder that is removed at the end. Never stops any process.
   powershell -NoProfile -ExecutionPolicy Bypass -File windows\tests\test-install.ps1 -Iso "C:\...\Life Line (USA).iso"
-  pwsh -NoProfile -File windows/tests/test-install.ps1 -Iso ".../Life Line (USA).iso" -PyExe python3 -PyArgs ' '
+  pwsh -NoProfile -File windows/tests/test-install.ps1 -Iso /path/to/your.iso -PyExe python3 -PyArgs ' '
 #>
 param([Parameter(Mandatory = $true)][string]$Iso, [string]$PyExe = 'py', [string]$PyArgs = '-3', [string]$WheelPath, [string]$ModelZipPath, [switch]$Keep)
 $ErrorActionPreference = 'Stop'
@@ -61,6 +61,7 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     open(os.path.join(a.assets, 'aliases.local.tsv'), 'wb').write(b'CLOBBERED')
     sys.exit(4)
 '@
+    Copy-Item -LiteralPath (J $REPO 'voice' 'tools' 'extract_assets.py') -Destination (J $KIT 'voice' 'tools' 'extract_assets.py')   # the real one
     $ROOT = J $T 'game'
 
     # 1. wrong ISO: refused before anything is written
@@ -71,6 +72,17 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     Check ((Install @{ Root = (J $T ('g' + [char]0x00E9 + 'me')) }) -eq 1) 'non-ASCII root -> exit 1'
     Check ((Install @{ Root = (J $T 'Lifeline' 'tools' 'x') }) -eq 1) 'root inside Lifeline\tools -> exit 1'
     Check ((Install @{ Root = (J $T 'Lifeline' 'game' 'launcher-venv') }) -eq 1) 'root inside launcher-venv -> exit 1'
+    # Python default: Lifeline\tools\python312\python.exe if present (only run), else py -3 with a warning
+    $savedProfile = $env:USERPROFILE
+    try {
+        $env:USERPROFILE = J $T 'profile'
+        $o = & $INSTALL -Root (J $T 'pyroot') -Iso $Iso -Kit $KIT -Src $SRC -DryRun -SkipVosk *>&1 | Out-String
+        Check ($o -match 'warning: .*python312.python\.exe not found; using py -3' -and $o -match 'python=py -3') 'no tools python -> py -3 with a warning'
+        $tp = J $T 'profile' 'Lifeline' 'tools' 'python312' 'python.exe'; W $tp ''
+        $o = & $INSTALL -Root (J $T 'pyroot') -Iso $Iso -Kit $KIT -Src $SRC -DryRun -SkipVosk *>&1 | Out-String
+        Check ($o -match [regex]::Escape("python=$tp") -and $o -notmatch 'warning: .*not found') 'tools python312 is the default when present'
+        Check (-not (Test-Path (J $T 'pyroot'))) 'python default checks wrote nothing'
+    } finally { $env:USERPROFILE = $savedProfile }
     # 3. dry run: real ISO check, but no writes at all
     Check ((Install @{ Root = $ROOT; DryRun = $true }) -eq 0) 'dry run -> exit 0'
     Check (-not (Test-Path $ROOT)) 'dry run -> nothing written'
@@ -93,9 +105,9 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     Check (@(Get-ChildItem (J $ROOT 'vosk' 'vosk')).Count -eq 4) 'vosk\vosk holds exactly the four DLLs'
     Check (Test-Path (J $ROOT 'vosk' 'vosk-model-small-en-us-0.15' 'conf' 'model.conf')) 'small model unpacked'
     Check (-not (Test-Path (J $ROOT 'vosk' '.unpack-vosk-model-small-en-us-0.15'))) 'model staging removed'
-    Check (@(Get-ChildItem (J $ROOT 'voice-assets') -Directory).Count -eq 3) 'voice assets extracted via wrapper (3 stub folders)'
+    Check (@(Get-ChildItem (J $ROOT 'voice-assets') -Directory).Count -eq 3) 'voice assets extracted via extract_assets.py (3 stub folders)'
     $paths = [IO.File]::ReadAllLines((J $ROOT 'voice-assets' 'stub1' 'paths.txt'))
-    Check ($paths[0] -ceq $Iso.Replace('\', '/') -and $paths[1] -ceq (J $ROOT 'voice-assets.partial').Replace('\', '/')) "wrapper got the ISO path directly, forward slashes: $($paths[0])"
+    Check ($paths[0] -ceq [IO.Path]::GetFullPath($Iso) -and $paths[1] -ceq (J $ROOT 'voice-assets.partial')) "extract_assets.py got the ISO path directly, unchanged: $($paths[0])"
     Check (-not (Test-Path (J $ROOT 'voice-assets.partial'))) 'assets staging renamed away'
     Check (Test-Path (J $ROOT 'voice-assets' 'aliases.tsv')) 'aliases.tsv built'
     $ej = [IO.File]::ReadAllText((J $ROOT 'lifeline.env.json')) | ConvertFrom-Json
@@ -134,6 +146,18 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     Check ((Install @{ Root = $ROOT }) -eq 0) 'one DLL missing -> exit 0'
     $all = $true; foreach ($k in $pins.Keys) { $f = J $ROOT 'vosk' 'vosk' $k; if (-not (Test-Path $f) -or (Sha $f) -ne $pins[$k] -or (Get-Item $f).LastWriteTimeUtc -eq $dllTimes[$k]) { $all = $false } }
     Check $all 'all four DLLs rewritten and verified'
+    # 8. a renamed ISO: its resolved path is stored as ISO and run.ps1 passes that to --disc
+    $ren = J $T 'my renamed disc.iso'
+    try { New-Item -ItemType SymbolicLink -Path $ren -Target $Iso -ErrorAction Stop | Out-Null } catch { $ren = $null }
+    if ($ren) {
+        Check ((Install @{ Root = $ROOT; Iso = $ren; SkipVosk = $true }) -eq 0) 'renamed ISO (symlink, same bytes) -> exit 0'
+        Check ((([IO.File]::ReadAllText((J $ROOT 'lifeline.env.json')) | ConvertFrom-Json).ISO) -ceq $ren) 'lifeline.env.json ISO = the renamed path'
+        $ej3 = [IO.File]::ReadAllText((J $ROOT 'lifeline.env.json')) | ConvertFrom-Json
+        $ej3 | Add-Member -NotePropertyName ELF -NotePropertyValue (J $ROOT 'boot.elf') -Force   # build.ps1's key
+        [IO.File]::WriteAllText((J $ROOT 'lifeline.env.json'), ($ej3 | ConvertTo-Json))
+        $dry = & $psexe -NoProfile -ExecutionPolicy Bypass -File (J $ROOT 'run.ps1') --dry-run 2>&1 | Out-String
+        Check ($dry -match [regex]::Escape('--disc "' + $ren + '"')) 'run.ps1 passes the stored (renamed) ISO path to --disc'
+    } else { Write-Host 'skip: cannot make a symlink here (Windows without Developer Mode); renamed-ISO check not run' }
 } finally {
     if ($Keep) { Write-Host "kept $T" } else { Remove-Item -LiteralPath $T -Recurse -Force -ErrorAction SilentlyContinue }
 }

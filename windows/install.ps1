@@ -4,14 +4,16 @@ Mirrors steam-machine/build.sh:118-184 and lifeline_launcher.py install(). Conta
 writes is under -Root and stays on this PC. It does not build ps2run.exe (that is build.ps1), and it never touches
 <Root>\launcher-venv, <Root>\ps2-web-recomp, or the tools\ and deps\ folders next to <Root>.
 
-  powershell -NoProfile -ExecutionPolicy Bypass -File windows\install.ps1 -Iso "C:\path\Life Line (USA).iso" [-Root C:\Users\you\Lifeline\game] [-DryRun]
+  powershell -NoProfile -ExecutionPolicy Bypass -File windows\install.ps1 -Iso "C:\path\to\your.iso" [-Root C:\Users\you\Lifeline\game] [-DryRun]
 
   -Root          install root = build.ps1's -Work (default %USERPROFILE%\Lifeline\game, i.e. C:\Users\<user>\Lifeline\game on
                  <pc-name>). Must be ASCII-only (Vosk/narrow fopen paths). Never Lifeline\tools or Lifeline\deps.
-  -Iso           your ISO; sha256 and size are checked before anything else (default %USERPROFILE%\Downloads\Life Line (USA).iso)
+  -Iso           your ISO, any file name; sha256 and size are checked before anything else, and the resolved path is
+                 stored as ISO in lifeline.env.json for run.ps1 (default: $DEFAULT_ISO_NAME below, in %USERPROFILE%\Downloads)
   -Kit           our repo checkout (default: the folder above this script)
   -Src           upstream ps2-web-recomp checkout that has scripts\disc.py (default <Root>\ps2-web-recomp, as build.ps1 makes it)
-  -PyExe/-PyArgs Python 3 to run the stdlib-only tools (default: py -3)
+  -PyExe/-PyArgs Python 3 to run the stdlib-only tools (default: %USERPROFILE%\Lifeline\tools\python312\python.exe,
+                 only run, never written; if it is missing: py -3, with a warning)
   -WheelPath     use an already downloaded vosk-0.3.45-py3-none-win_amd64.whl (still sha256-checked)
   -ModelZipPath  use an already downloaded vosk-model-small-en-us-0.15.zip (still sha256-checked)
   -SkipVosk      skip the Vosk library and model steps
@@ -22,7 +24,7 @@ Windows PowerShell 5.1 compatible. ASCII only.
 [CmdletBinding()]
 param(
     [string]$Root, [string]$Iso, [string]$Kit, [string]$Src,
-    [string]$PyExe = 'py', [string]$PyArgs = '-3',
+    [string]$PyExe, [string]$PyArgs,
     [string]$WheelPath, [string]$ModelZipPath,
     [switch]$SkipVosk, [switch]$DryRun
 )
@@ -31,6 +33,7 @@ Set-StrictMode -Version 2
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow with the progress bar on 5.1
 
 # --- pinned inputs ---------------------------------------------------------------
+$DEFAULT_ISO_NAME = 'Life Line (USA).iso'   # the only place the default ISO file name is defined (-Iso overrides)
 $ISO_SHA256 = 'cb0bebe97770d7964b0c003bae204a610f784bc9611656596af8f6a8265c5d38'   # Alec's verified dump (windows-port-plan.md section 7)
 $ISO_SIZE   = 3777593344
 $VOSK_VER   = '0.3.45'
@@ -54,13 +57,11 @@ function Die([string]$m, [int]$code = 1) { Say "ERROR: $m"; exit $code }
 function Plan([string]$m) { if ($DryRun) { Say "  [dry-run] would $m" } else { Say "  $m" } }
 function Sha256([string]$p) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLowerInvariant() }
 function FullPath([string]$p) { return [IO.Path]::GetFullPath($p) }
-function Fwd([string]$p) { return $p.Replace('\', '/') }   # paths spliced into Python source (T5): never backslashes
 function Is-Empty-Dir([string]$d) { return (-not (Test-Path -LiteralPath $d -PathType Container)) -or (@(Get-ChildItem -LiteralPath $d -Force).Count -eq 0) }
 function Need-Space([string]$dir, [int]$mb) {
     $free = (New-Object IO.DriveInfo ([IO.Path]::GetPathRoot((FullPath $dir)))).AvailableFreeSpace
     if ($free -lt ([int64]$mb * 1MB)) { Die ("not enough free space in {0}: need {1} MB, have {2} MB" -f $dir, $mb, [int64]($free / 1MB)) }
 }
-$PY_ARGS = @($PyArgs -split '\s+' | Where-Object { $_ -ne '' })
 function Py { $ErrorActionPreference = 'Continue'; & $PyExe @PY_ARGS @args | Out-Host; return $LASTEXITCODE }   # Continue: a tool's stderr line must not throw on 5.1
 # url dest sha256 -> verified file at dest (.part removed on any failure); an existing dest with the right sha is reused.
 function Fetch([string]$url, [string]$dest, [string]$sha) {
@@ -84,7 +85,15 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 # --- arguments and path rules -------------------------------------------------------------
 $HOMEDIR = $env:USERPROFILE; if (-not $HOMEDIR) { $HOMEDIR = $HOME }
 if (-not $Root) { $Root = Join-Path (Join-Path $HOMEDIR 'Lifeline') 'game' }
-if (-not $Iso)  { $Iso = Join-Path (Join-Path $HOMEDIR 'Downloads') 'Life Line (USA).iso' }
+if (-not $Iso)  { $Iso = Join-Path (Join-Path $HOMEDIR 'Downloads') $DEFAULT_ISO_NAME }
+# Python: the Lifeline toolchain's own (run only; nothing is ever written under tools\), else the py launcher.
+$pyArgsGiven = $PSBoundParameters.ContainsKey('PyArgs')
+if (-not $PyExe) {
+    $toolPy = Join-Path (Join-Path (Join-Path (Join-Path $HOMEDIR 'Lifeline') 'tools') 'python312') 'python.exe'
+    if (Test-Path -LiteralPath $toolPy -PathType Leaf) { $PyExe = $toolPy; if (-not $pyArgsGiven) { $PyArgs = '' } }
+    else { Write-Host "warning: $toolPy not found; using py -3"; $PyExe = 'py'; if (-not $pyArgsGiven) { $PyArgs = '-3' } }
+}
+$PY_ARGS = @($PyArgs -split '\s+' | Where-Object { $_ -ne '' })
 if (-not $Kit)  { $Kit = Split-Path -Parent $PSScriptRoot }
 $Root = FullPath $Root; $Iso = FullPath $Iso; $Kit = FullPath $Kit
 if (-not $Src)  { $Src = Join-Path $Root 'ps2-web-recomp' }
@@ -94,9 +103,8 @@ for ($i = 1; $i -lt $segs.Count; $i++) {   # Lifeline\tools, Lifeline\deps (Lead
     if (($segs[$i - 1] -eq 'Lifeline' -and ($segs[$i] -eq 'tools' -or $segs[$i] -eq 'deps')) -or $segs[$i] -eq 'launcher-venv') { Die "install root must not be inside Lifeline\tools, Lifeline\deps or launcher-venv: $Root" }
 }
 if ($Root -cmatch '[^\x20-\x7E]') { Die "install root must be ASCII-only (Vosk model and log paths): $Root" }
-foreach ($p in @($Root, $Iso)) { if ($p.Contains("'")) { Die "path must not contain a quote (it is passed into Python source): $p" } }
 if ($Iso -cmatch '[^\x20-\x7E]') { Say "warning: ISO path is not ASCII; ps2run reads it with narrow-char file APIs (untested): $Iso" }
-Say ("== Lifeline install{0}: root={1} iso={2} kit={3} src={4}" -f ($(if ($DryRun) { ' (dry run)' } else { '' })), $Root, $Iso, $Kit, $Src)
+Say ("== Lifeline install{0}: root={1} iso={2} kit={3} src={4} python={5} {6}" -f ($(if ($DryRun) { ' (dry run)' } else { '' })), $Root, $Iso, $Kit, $Src, $PyExe, $PyArgs)
 
 # --- the game must be closed (never stopped by us) ----------------------------------------
 $running = @(Get-Process -Name 'ps2run' -ErrorAction SilentlyContinue)
@@ -104,7 +112,7 @@ if ($running.Count -gt 0) { Die ("ps2run is running (pid {0}); close the game an
 
 # --- your ISO: size + sha256 before use ------------------------------------------------
 if (-not (Test-Path -LiteralPath $Iso -PathType Leaf)) { Die "ISO not found: $Iso" 3 }
-$isoLen = (Get-Item -LiteralPath $Iso).Length
+$fs = [IO.File]::OpenRead($Iso); try { $isoLen = $fs.Length } finally { $fs.Dispose() }   # follows a link to the real file
 if ($isoLen -ne $ISO_SIZE) { Die "ISO size $isoLen does not match the expected $ISO_SIZE bytes; refusing to use it" 3 }
 Say '  checking ISO sha256 (reads the whole file) ...'
 $isoSha = Sha256 $Iso
@@ -202,36 +210,18 @@ try {
         $meta = Join-Path $Root 'iso-meta'
         $stage = Join-Path $Root 'voice-assets.partial'
         if ($DryRun) {
-            Plan "run disc.py extract (ISO path passed directly) -> $(Join-Path $meta 'OS.FAT'), then the arcx/fat wrapper -> $ASSETS (forward-slash paths)"
+            Plan "run disc.py extract (ISO path passed directly) -> $(Join-Path $meta 'OS.FAT'), then extract_assets.py -> $ASSETS"
         } else {
             if (-not (Test-Path -LiteralPath $disc -PathType Leaf)) { Die "upstream disc.py not found: $disc (pass -Src)" }
-            foreach ($t in @('arcx.py', 'fat.py')) { if (-not (Test-Path -LiteralPath (Join-Path $tools $t) -PathType Leaf)) { Die "missing $(Join-Path $tools $t) (pass -Kit)" } }
-            $rc = Py '-I' (Fwd $disc) 'extract' (Fwd $Iso) (Fwd $meta) 'OS.FAT'
+            $ea = Join-Path $tools 'extract_assets.py'
+            foreach ($t in @('extract_assets.py', 'arcx.py', 'fat.py')) { if (-not (Test-Path -LiteralPath (Join-Path $tools $t) -PathType Leaf)) { Die "missing $(Join-Path $tools $t) (pass -Kit)" } }
+            $rc = Py '-I' $disc 'extract' $Iso $meta 'OS.FAT'
             if ($rc -ne 0) { Die "disc.py failed (exit $rc)" }
             $fat = Join-Path $meta 'OS.FAT'
             if (-not (Test-Path -LiteralPath $fat -PathType Leaf)) { Die "disc.py did not write $fat" }
             if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }   # our own leftover from an interrupted run
-            # Same wrapper as steam-machine/build.sh:157-168 (the three dev-box paths baked into arcx.py/fat.py are
-            # swapped for this machine's). Every path is passed with forward slashes so no backslash lands in Python source.
-            $wrapper = @'
-import os, sys
-tools, fat, iso, out = sys.argv[1:]
-src = open(os.path.join(tools, 'arcx.py')).read()
-fatsrc = open(os.path.join(tools, 'fat.py')).read().split('for e in ents')[0]
-src = src.replace("exec(open(os.path.join(os.path.dirname(__file__),'fat.py')).read().split('for e in ents')[0])", 'exec(FATSRC)')
-fatsrc = fatsrc.replace('<repo-root>/private/iso/OS.FAT', fat)
-src = src.replace('<repo-root>/dump/Life Line (USA).iso', iso).replace('<repo-root>/private/asr_files', out)
-g = {'__file__': os.path.join(tools, 'arcx.py'), '__name__': '__main__', 'FATSRC': fatsrc}
-import contextlib, io
-with contextlib.redirect_stdout(io.StringIO()):
-    exec(compile(src, 'arcx.py', 'exec'), g)
-print('voice assets:', len(os.listdir(out)), 'folders')
-'@
-            $wf = [IO.Path]::GetTempFileName()
-            try {
-                [IO.File]::WriteAllText($wf, $wrapper, (New-Object System.Text.ASCIIEncoding))
-                $rc = Py (Fwd $wf) (Fwd $tools) (Fwd $fat) (Fwd $Iso) (Fwd $stage)
-            } finally { Remove-Item -LiteralPath $wf -Force -ErrorAction SilentlyContinue }
+            # voice\tools\extract_assets.py (shared with build.sh): paths go in as argv, never into Python source
+            $rc = Py $ea $fat $Iso $stage
             if ($rc -ne 0) { Die "voice asset extraction failed (exit $rc); $stage left for inspection" }
             if (Is-Empty-Dir $stage) { Die "voice asset extraction wrote nothing" }
             if (Test-Path -LiteralPath $ASSETS) { Remove-Item -LiteralPath $ASSETS -Force -Recurse }   # it is empty (checked above)

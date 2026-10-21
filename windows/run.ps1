@@ -128,7 +128,9 @@ if ((Test-Path -LiteralPath $CFG -PathType Leaf) -and -not (Test-V 'PS2_INPUT_MA
 }
 
 # --skip-tutorial: start in the first room from saves\room001.state. A loaded state does not tell the voice
-# module the active context, so preset it (value copied verbatim from run.sh).
+# module the active context, so preset it. main has no shared definition of this value: it is inline in
+# steam-machine/run.sh:54 (and made by steam-machine/make-skip-state.sh:34). This is the one Windows copy;
+# keep it equal to run.sh:54 (windows/tests/compare-run-sh.sh checks that both print the same value).
 $EXTRA = @()
 if ($SKIP) {
     $st = Join-Path (Join-Path $HERE 'saves') 'room001.state'
