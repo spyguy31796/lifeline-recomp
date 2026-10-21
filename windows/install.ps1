@@ -2,7 +2,8 @@
 Lifeline Recomp: Windows install steps for voice (Vosk, model, voice assets, aliases) from YOUR OWN disc.
 Mirrors steam-machine/build.sh:118-184 and lifeline_launcher.py install(). Contains only our code; everything it
 writes is under -Root and stays on this PC. It does not build ps2run.exe (that is build.ps1), and it never touches
-<Root>\launcher-venv, <Root>\ps2-web-recomp, or the tools\ and deps\ folders next to <Root>.
+<Root>\ps2-web-recomp or the tools\ and deps\ folders next to <Root> (tools\python312 is only run, never written).
+It installs the launcher into <Root>\launcher and creates <Root>\launcher-venv only if it is missing (or has no pygame).
 
   powershell -NoProfile -ExecutionPolicy Bypass -File windows\install.ps1 -Iso "C:\path\to\your.iso" [-Root C:\Users\you\Lifeline\game] [-DryRun]
 
@@ -17,6 +18,8 @@ writes is under -Root and stays on this PC. It does not build ps2run.exe (that i
   -WheelPath     use an already downloaded vosk-0.3.45-py3-none-win_amd64.whl (still sha256-checked)
   -ModelZipPath  use an already downloaded vosk-model-small-en-us-0.15.zip (still sha256-checked)
   -SkipVosk      skip the Vosk library and model steps
+  -VenvPython    Python 3.10+ that creates launcher-venv (default %USERPROFILE%\Lifeline\tools\python312\python.exe; run only)
+  -SkipLauncher  skip the launcher files and launcher-venv step
   -DryRun        do every read-only check (ISO hash, game closed, what is missing) and print what would be written
 Exit codes: 0 ok, 1 failed, 2 game is running (close it first; this script never stops it), 3 ISO check failed.
 Windows PowerShell 5.1 compatible. ASCII only.
@@ -26,7 +29,8 @@ param(
     [string]$Root, [string]$Iso, [string]$Kit, [string]$Src,
     [string]$PyExe, [string]$PyArgs,
     [string]$WheelPath, [string]$ModelZipPath,
-    [switch]$SkipVosk, [switch]$DryRun
+    [string]$VenvPython,
+    [switch]$SkipVosk, [switch]$SkipLauncher, [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
@@ -49,6 +53,7 @@ $DLLS = [ordered]@{   # wheel vosk/<name> -> sha256 (voice-section.md section 2)
 $MODEL      = 'vosk-model-small-en-us-0.15'                                         # Apache-2.0
 $MODEL_URL  = "https://alphacephei.com/vosk/models/$MODEL.zip"
 $MODEL_SHA  = '30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498'   # same as build.sh MODEL_SHA
+$LAUNCHER_REQS = 'launcher-requirements.txt'   # next to this script: pygame-ce, pinned + hash-checked
 
 # --- helpers -----------------------------------------------------------------------
 $script:LOG = $null
@@ -91,8 +96,9 @@ if (-not $Root) { $Root = Join-Path (Join-Path $HOMEDIR 'Lifeline') 'game' }
 if (-not $Iso)  { $Iso = Join-Path (Join-Path $HOMEDIR 'Downloads') $DEFAULT_ISO_NAME }
 # Python: the Lifeline toolchain's own (run only; nothing is ever written under tools\), else the py launcher.
 $pyArgsGiven = $PSBoundParameters.ContainsKey('PyArgs')
+$toolPy = Join-Path (Join-Path (Join-Path (Join-Path $HOMEDIR 'Lifeline') 'tools') 'python312') 'python.exe'
+if (-not $VenvPython) { $VenvPython = $toolPy }
 if (-not $PyExe) {
-    $toolPy = Join-Path (Join-Path (Join-Path (Join-Path $HOMEDIR 'Lifeline') 'tools') 'python312') 'python.exe'
     if (Test-Path -LiteralPath $toolPy -PathType Leaf) { $PyExe = $toolPy; if (-not $pyArgsGiven) { $PyArgs = '' } }
     else { Write-Host "warning: $toolPy not found; using py -3"; $PyExe = 'py'; if (-not $pyArgsGiven) { $PyArgs = '-3' } }
 }
@@ -126,6 +132,56 @@ if (-not $DryRun) {
     foreach ($d in @($Root, (Join-Path $Root 'logs'), (Join-Path $Root 'saves'))) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
     $script:LOG = Join-Path (Join-Path $Root 'logs') ('install-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
 }
+
+# --- launcher (Step 6; a failure here is not fatal: run.ps1 works without it) ------------------------------
+$script:LAUNCHER_OK = $true
+function Venv-Py([string]$venv) {   # Scripts\python.exe; bin/python only for pwsh on Linux (tests)
+    $p = Join-Path (Join-Path $venv 'Scripts') 'python.exe'
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf) -and [IO.Path]::DirectorySeparatorChar -ne '\') { $p = Join-Path (Join-Path $venv 'bin') 'python' }
+    return $p
+}
+function Run-Quiet([string]$exe, [string[]]$argv) { $ErrorActionPreference = 'Continue'; & $exe @argv *> $null; return $LASTEXITCODE }
+function Launcher-Warn([string]$m) { Say "  warning: $m (the game still runs with run.ps1)"; $script:LAUNCHER_OK = $false }
+function Install-Launcher {
+    Say '== launcher: files'
+    $ldir = Join-Path $Root 'launcher'
+    $lsrc = Join-Path (Join-Path $Kit 'steam-machine') 'launcher'
+    $files = @((Join-Path $lsrc 'lifeline_launcher.py'), (Join-Path $lsrc 'bindings.py'), (Join-Path $PSScriptRoot 'launcher.ps1'), (Join-Path $PSScriptRoot 'launcher.cmd'))
+    foreach ($f in $files) {
+        if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { Launcher-Warn "$f not found; launcher not installed"; return }
+    }
+    if ($DryRun) { Plan "copy lifeline_launcher.py, bindings.py, launcher.ps1, launcher.cmd -> $ldir" } else {
+        New-Item -ItemType Directory -Force -Path $ldir | Out-Null
+        foreach ($f in $files) {
+            $dst = Join-Path $ldir (Split-Path -Leaf $f)
+            if ((FullPath $f) -eq (FullPath $dst)) { continue }   # running from the installed copy
+            $tmp = "$dst.tmp"; Copy-Item -LiteralPath $f -Destination $tmp -Force; Move-Item -LiteralPath $tmp -Destination $dst -Force
+            if ((Sha256 $f) -ne (Sha256 $dst)) { Die "verify failed: $dst" }
+        }
+        Say "  installed the launcher in $ldir (Steam target: $(Join-Path $ldir 'launcher.cmd'))"
+    }
+    $venv = Join-Path $Root 'launcher-venv'; $vpy = Venv-Py $venv
+    $reqs = Join-Path $PSScriptRoot $LAUNCHER_REQS
+    if (Test-Path -LiteralPath $vpy -PathType Leaf) {
+        if ((Run-Quiet $vpy @('-c', 'import pygame')) -eq 0) { Say '== launcher-venv: present (kept)'; return }
+        Say '== launcher-venv: present but without pygame; installing it'
+    } else {
+        Say "== launcher-venv: missing; creating it with $VenvPython"
+        if (-not (Test-Path -LiteralPath $VenvPython -PathType Leaf)) { Launcher-Warn "$VenvPython not found; launcher-venv not created (pass -VenvPython)"; return }
+        if ((Run-Quiet $VenvPython @('-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)')) -ne 0) { Launcher-Warn "$VenvPython is older than 3.10 (pygame-ce has no wheel for it)"; return }
+        if ($DryRun) { Plan "run $VenvPython -m venv $venv" } else {
+            $rc = Py-Run $VenvPython @('-m', 'venv', $venv)
+            if ($rc -ne 0 -or -not (Test-Path -LiteralPath (Venv-Py $venv) -PathType Leaf)) { Launcher-Warn "python -m venv failed (exit $rc)"; return }
+            $vpy = Venv-Py $venv
+        }
+    }
+    if ($DryRun) { Plan "run <venv python> -m pip install --only-binary=:all: -r $reqs (pygame-ce, hash-checked)"; return }
+    $rc = Py-Run $vpy @('-m', 'pip', 'install', '--disable-pip-version-check', '--no-input', '--only-binary=:all:', '-r', $reqs)
+    if ($rc -ne 0) { Launcher-Warn "pip install of pygame-ce failed (exit $rc; needs network once)"; return }
+    if ((Run-Quiet $vpy @('-c', 'import pygame')) -ne 0) { Launcher-Warn 'pygame still does not import in launcher-venv'; return }
+    Say "  launcher-venv ready: $vpy"
+}
+function Py-Run([string]$exe, [string[]]$argv) { $ErrorActionPreference = 'Continue'; & $exe @argv | Out-Host; return $LASTEXITCODE }
 
 # --- Step 0: back up the user's own alias fixes; restored byte for byte whatever happens ------
 $ASSETS = Join-Path $Root 'voice-assets'
@@ -245,7 +301,7 @@ try {
     # lifeline.env.json is shared with build.ps1 (it owns SRC, PS2RUN, ELF); we own the voice keys and ISO.
     $envf = Join-Path $Root 'lifeline.env.json'
     $set = @{
-        'ISO' = $Iso; 'VOSK_DIR' = $VOSK
+        'ISO' = $Iso; 'VOSK_DIR' = $VOSK; 'KIT' = $Kit   # KIT: where the launcher finds windows\build.ps1 + install.ps1
         'PS2_VOICE_VOSK_MODEL' = $MODELDIR; 'PS2_VOICE_VOSK_LIB' = (Join-Path $VOSKLIB 'libvosk.dll'); 'PS2_VOICE_ASSETS' = $ASSETS
     }
     $defaults = @{ 'MEMCARD' = (Join-Path (Join-Path $Root 'saves') 'lifeline.ps2') }
@@ -274,6 +330,9 @@ try {
             Say '  installed shipped icon packs'
         }
     }
+
+    # --- Step 6: launcher files (<Root>\launcher) and launcher-venv (only if missing or without pygame) --------
+    if ($SkipLauncher) { Say '== launcher: skipped (-SkipLauncher)' } else { Install-Launcher }
 } finally {
     # never lose the user's own alias fixes, whatever happened above (lifeline_launcher.py:276-279)
     if ($null -ne $KEEP -and -not $DryRun) {
@@ -293,5 +352,8 @@ try {
     }
 }
 if ($DryRun) { Say '== dry run done: nothing was written' }
-elseif ($ALIASES_OK) { Say '== install done' } else { Say '== install done (aliases step failed; game still playable)' }
+else {
+    $notes = @(); if (-not $ALIASES_OK) { $notes += 'aliases step failed' }; if (-not $script:LAUNCHER_OK) { $notes += 'launcher step failed' }
+    if ($notes.Count -eq 0) { Say '== install done' } else { Say "== install done ($($notes -join '; '); game still playable)" }
+}
 exit 0

@@ -1,0 +1,7 @@
+# Launcher venv on Windows (install.ps1 creates <Root>\launcher-venv only if it is missing or has no pygame).
+# pygame-ce bundles SDL2, so gamepads (XInput, Steam Input) work through SDL GameController as on Linux.
+# Pinned and hash-checked (pip --require-hashes is implied by the hashes). The cp312 win_amd64 wheel is the one
+# Lifeline\tools\python312 uses; the cp313 manylinux x86_64 hash only lets the Linux test of install.ps1 run.
+pygame-ce==2.5.8 \
+    --hash=sha256:2cfe8afe1e7955780f0bd4f01d65f1b4903f561407052081cfcec31e80957c3c \
+    --hash=sha256:5bb966b610e161a8f6d908b4c62ef3a1f3e922bc7bed73bd70a3e15dc780b90e

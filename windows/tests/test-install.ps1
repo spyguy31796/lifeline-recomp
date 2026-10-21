@@ -4,9 +4,12 @@ and Python 3. Uses stub disc.py / arcx.py / fat.py / build_aliases.py (no game d
 extracted; the real Vosk wheel and model are used (downloaded, or pass -WheelPath / -ModelZipPath).
 Everything is written to a fresh temp folder that is removed at the end. Never stops any process.
   powershell -NoProfile -ExecutionPolicy Bypass -File windows\tests\test-install.ps1 -Iso "C:\path\to\your.iso"
-  pwsh -NoProfile -File windows/tests/test-install.ps1 -Iso /path/to/your.iso -PyExe python3 -PyArgs ' '
+  pwsh -NoProfile -File windows/tests/test-install.ps1 -Iso /path/to/your.iso -PyExe python3 -PyArgs ' ' -VenvPython /usr/bin/python3
+-VenvPython: a Python 3.10+ to test the real launcher-venv step with (creates a venv in the temp folder and pip-installs
+the pinned pygame-ce; needs network). Without it only the launcher files and the missing-Python path are checked.
 #>
-param([Parameter(Mandatory = $true)][string]$Iso, [string]$PyExe = 'py', [string]$PyArgs = '-3', [string]$WheelPath, [string]$ModelZipPath, [switch]$Keep)
+param([Parameter(Mandatory = $true)][string]$Iso, [string]$PyExe = 'py', [string]$PyArgs = '-3', [string]$WheelPath, [string]$ModelZipPath,
+      [string]$VenvPython, [switch]$Keep)
 $ErrorActionPreference = 'Stop'
 $REPO = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $INSTALL = Join-Path (Join-Path $REPO 'windows') 'install.ps1'
@@ -24,7 +27,9 @@ function Sha([string]$p) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $
 function Install([hashtable]$extra) {
     $p = @{ Kit = $KIT; Src = $SRC; Iso = $Iso; PyExe = $PyExe; PyArgs = $PyArgs }
     if ($WheelPath) { $p.WheelPath = $WheelPath }; if ($ModelZipPath) { $p.ModelZipPath = $ModelZipPath }
+    $p.SkipLauncher = $true   # the launcher step is tested on its own (section 9)
     foreach ($k in $extra.Keys) { $p[$k] = $extra[$k] }
+    if ($p.ContainsKey('Launcher')) { $p.Remove('Launcher'); $p.Remove('SkipLauncher') }
     $global:LASTEXITCODE = 0
     try { & $INSTALL @p *>&1 | ForEach-Object { "    | $_" } | Out-Host } catch { Write-Host "    threw: $($_.Exception.Message)"; return 99 }
     return $LASTEXITCODE
@@ -70,6 +75,8 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     sys.exit(4)
 '@
     Copy-Item -LiteralPath (J $REPO 'voice' 'tools' 'extract_assets.py') -Destination (J $KIT 'voice' 'tools' 'extract_assets.py')   # the real one
+    New-Item -ItemType Directory -Force -Path (J $KIT 'steam-machine' 'launcher') | Out-Null   # the real launcher (our code only)
+    foreach ($f in 'lifeline_launcher.py', 'bindings.py') { Copy-Item -LiteralPath (J $REPO 'steam-machine' 'launcher' $f) -Destination (J $KIT 'steam-machine' 'launcher' $f) }
     $ROOT = J $T 'game'
     Check ((Count-In (J $T 'no-such-folder')) -eq -1) 'a missing folder counts as -1 (a FAIL line, not a throw)'
 
@@ -85,10 +92,10 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     $savedProfile = $env:USERPROFILE
     try {
         $env:USERPROFILE = J $T 'profile'
-        $o = & $INSTALL -Root (J $T 'pyroot') -Iso $Iso -Kit $KIT -Src $SRC -DryRun -SkipVosk *>&1 | Out-String
+        $o = & $INSTALL -Root (J $T 'pyroot') -Iso $Iso -Kit $KIT -Src $SRC -DryRun -SkipVosk -SkipLauncher *>&1 | Out-String
         Check ($o -match 'warning: .*python312.python\.exe not found; using py -3' -and $o -match 'python=py -3') 'no tools python -> py -3 with a warning'
         $tp = J $T 'profile' 'Lifeline' 'tools' 'python312' 'python.exe'; W $tp ''
-        $o = & $INSTALL -Root (J $T 'pyroot') -Iso $Iso -Kit $KIT -Src $SRC -DryRun -SkipVosk *>&1 | Out-String
+        $o = & $INSTALL -Root (J $T 'pyroot') -Iso $Iso -Kit $KIT -Src $SRC -DryRun -SkipVosk -SkipLauncher *>&1 | Out-String
         Check ($o -match [regex]::Escape("python=$tp") -and $o -notmatch 'warning: .*not found') 'tools python312 is the default when present'
         Check (-not (Test-Path (J $T 'pyroot'))) 'python default checks wrote nothing'
     } finally { $env:USERPROFILE = $savedProfile }
@@ -122,6 +129,7 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     $ej = [IO.File]::ReadAllText((J $ROOT 'lifeline.env.json')) | ConvertFrom-Json
     foreach ($k in 'ISO', 'VOSK_DIR', 'PS2_VOICE_VOSK_MODEL', 'PS2_VOICE_VOSK_LIB', 'PS2_VOICE_ASSETS', 'MEMCARD') { Check ([bool]$ej.$k) "lifeline.env.json has $k" }
     Check ($ej.PS2_VOICE_VOSK_LIB -ceq (J $ROOT 'vosk' 'vosk' 'libvosk.dll')) 'PS2_VOICE_VOSK_LIB points at vosk\vosk\libvosk.dll'
+    Check ($ej.KIT -ceq $KIT) 'lifeline.env.json KIT = the repo checkout (the launcher finds windows\build.ps1 there)'
     Check ((Sha (J $ROOT 'run.ps1')) -eq (Sha (J $REPO 'windows' 'run.ps1'))) 'run.ps1 installed'
     # the installed run.ps1 reads the merged lifeline.env.json (dry run: nothing started)
     $ej2 = [IO.File]::ReadAllText((J $ROOT 'lifeline.env.json')) | ConvertFrom-Json
@@ -173,6 +181,40 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
         $dry = & $psexe -NoProfile -ExecutionPolicy Bypass -File (J $ROOT 'run.ps1') --dry-run 2>&1 | Out-String
         Check ($dry -match [regex]::Escape('--disc "' + $ren + '"')) 'run.ps1 passes the stored (renamed) ISO path to --disc'
     } else { Write-Host 'skip: cannot make a symlink here (Windows without Developer Mode); renamed-ISO check not run' }
+    # 9. launcher: files into <Root>\launcher, launcher-venv only if missing (never under tools\), launcher.ps1 wiring
+    $LDIR = J $ROOT 'launcher'; $VENV = J $ROOT 'launcher-venv'
+    $noPy = J $T 'profile' 'no-python312' 'python.exe'
+    $o = & $INSTALL -Root $ROOT -Iso $Iso -Kit $KIT -Src $SRC -PyExe $PyExe -PyArgs $PyArgs -SkipVosk -DryRun -VenvPython $noPy *>&1 | Out-String
+    Check ($o -match 'would copy lifeline_launcher.py, bindings.py, launcher.ps1, launcher.cmd' -and -not (Test-Path $LDIR)) 'launcher dry run: plans the copy, writes nothing'
+    Check ($o -match 'launcher-venv: missing' -and $o -match [regex]::Escape("$noPy not found") -and -not (Test-Path $VENV)) 'launcher dry run: missing venv python reported, no venv'
+    $o = & $INSTALL -Root $ROOT -Iso $Iso -Kit $KIT -Src $SRC -PyExe $PyExe -PyArgs $PyArgs -SkipVosk -VenvPython $noPy *>&1 | Out-String
+    Check ($LASTEXITCODE -eq 0 -and $o -match 'launcher step failed; game still playable') 'no venv python -> warning, still exit 0'
+    $lf = @{ 'lifeline_launcher.py' = (J $REPO 'steam-machine' 'launcher' 'lifeline_launcher.py'); 'bindings.py' = (J $REPO 'steam-machine' 'launcher' 'bindings.py')
+             'launcher.ps1' = (J $REPO 'windows' 'launcher.ps1'); 'launcher.cmd' = (J $REPO 'windows' 'launcher.cmd') }
+    $okf = $true; foreach ($k in $lf.Keys) { $d = J $LDIR $k; if (-not (Test-Path $d) -or (Sha $d) -ne (Sha $lf[$k])) { $okf = $false } }
+    Check ($okf -and (Count-In $LDIR) -eq 4) 'launcher files installed byte for byte (4 files, no temp left)'
+    Check (-not (Test-Path $VENV)) 'no venv python -> no launcher-venv'
+    $env:LIFELINE_WORK = $ROOT
+    try {
+        $o = & $psexe -NoProfile -ExecutionPolicy Bypass -File (J $LDIR 'launcher.ps1') --dry-run 2>&1 | Out-String
+        Check ($LASTEXITCODE -eq 1 -and $o -match 'launcher-venv.*is missing. Run windows\\install.ps1') 'launcher.ps1 without launcher-venv -> exit 1 with the install hint'
+        if ($VenvPython) {
+            $o = & $INSTALL -Root $ROOT -Iso $Iso -Kit $KIT -Src $SRC -PyExe $PyExe -PyArgs $PyArgs -SkipVosk -VenvPython $VenvPython *>&1 | Out-String
+            $vpy = J $VENV 'Scripts' 'python.exe'; if (-not (Test-Path $vpy)) { $vpy = J $VENV 'bin' 'python' }
+            Check ($LASTEXITCODE -eq 0 -and $o -match 'launcher-venv: missing; creating it' -and $o -match 'launcher-venv ready') 'launcher-venv created from -VenvPython'
+            $ver = & $vpy -c 'import os; os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"; import pygame; print(pygame.version.ver)' 2>$null
+            Check ($ver -eq '2.5.8') "launcher-venv has the pinned pygame-ce ($ver)"
+            $t0 = (Get-Item $vpy).LastWriteTimeUtc
+            $o = & $INSTALL -Root $ROOT -Iso $Iso -Kit $KIT -Src $SRC -PyExe $PyExe -PyArgs $PyArgs -SkipVosk -VenvPython $noPy *>&1 | Out-String
+            Check ($LASTEXITCODE -eq 0 -and $o -match 'launcher-venv: present \(kept\)' -and $o -notmatch 'launcher step failed' -and (Get-Item $vpy).LastWriteTimeUtc -eq $t0) 'launcher-venv present -> kept, not recreated'
+            # the installed launcher.ps1 runs the installed lifeline_launcher.py with the venv python and LIFELINE_WORK
+            $o = & $psexe -NoProfile -ExecutionPolicy Bypass -File (J $LDIR 'launcher.ps1') --dry-run 2>&1 | Out-String
+            $want = if ($IsLinux -or $IsMacOS) { [regex]::Escape((J $ROOT 'run.sh') + ' --debug --fullscreen') } else { '-File "?' + [regex]::Escape((J $ROOT 'run.ps1')) + '"? --debug --fullscreen' }
+            Check ($LASTEXITCODE -eq 0 -and $o -match $want) "launcher.ps1 --dry-run -> $($o.Trim())"
+            $o = & $psexe -NoProfile -ExecutionPolicy Bypass -File (J $REPO 'windows' 'launcher.ps1') --dry-run 2>&1 | Out-String
+            Check ($LASTEXITCODE -eq 0 -and $o -match $want) 'repo windows\launcher.ps1 finds steam-machine\launcher\lifeline_launcher.py'
+        } else { Write-Host 'skip: no -VenvPython; real launcher-venv creation not tested' }
+    } finally { Remove-Item Env:LIFELINE_WORK -ErrorAction SilentlyContinue }
 } catch {
     # anything unexpected is a FAIL with its line, and the summary below still runs
     Check $false "test threw at line $($_.InvocationInfo.ScriptLineNumber): $($_.Exception.Message)"

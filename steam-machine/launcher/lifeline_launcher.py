@@ -8,14 +8,20 @@ Headless helpers (no window):
   lifeline_launcher.py --print-config        show config.ini as run.sh will see it
   lifeline_launcher.py --dry-run             print the run.sh command that PLAY would execute
   lifeline_launcher.py --set qol.resolution_scale=2 [--set ...]   edit config and exit
+Windows (os.name == "nt", started by windows/launcher.cmd / launcher.ps1 from game/launcher-venv): the same app, with
+run.ps1 / build.ps1 / install.ps1 in place of run.sh / build.sh, and the install root %USERPROFILE%/Lifeline/game.
+Every Windows difference is behind WIN below; the Linux code paths are unchanged.
 Contains only our code; never bundles game data.
 """
 import argparse, configparser, re, hashlib, glob, os, shlex, subprocess, sys, tempfile, threading, time, urllib.request, zipfile, shutil
 
-HOME = os.path.expanduser("~")
-WORK = os.environ.get("LIFELINE_WORK", os.path.join(HOME, "lifeline-recomp"))
+WIN = os.name == "nt"
+HOME = os.path.expanduser("~")   # %USERPROFILE% on Windows
+WORK = os.environ.get("LIFELINE_WORK", os.path.join(HOME, "Lifeline", "game") if WIN else os.path.join(HOME, "lifeline-recomp"))
 CFG = os.path.join(WORK, "config.ini")
 HERE = os.path.dirname(os.path.abspath(__file__))
+RUN_SCRIPT = "run.ps1" if WIN else "run.sh"
+ENV_FILE = "lifeline.env.json" if WIN else "lifeline.env"   # written by build.ps1 + install.ps1 / build.sh
 DEFAULT_ISO = os.path.join(HOME, "Downloads", "Life Line (USA).iso")
 LARGE_MODEL = "vosk-model-en-us-0.22"
 # sha256 of the zip we tested (computed from the real download on 2026-10-13)
@@ -61,13 +67,28 @@ def save(c):
     os.makedirs(WORK, exist_ok=True)
     tmp = CFG + ".tmp"
     with open(tmp, "w") as f:
-        f.write("# Lifeline Recomp launcher config; run.sh reads [qol]. 'coming soon' items are reserved.\n")
+        f.write("# Lifeline Recomp launcher config; %s reads [qol]. 'coming soon' items are reserved.\n" % RUN_SCRIPT)
         c.write(f)
     os.replace(tmp, CFG)
 
 
+def powershell():
+    """Windows PowerShell 5.1 (always present), else PowerShell 7 (pwsh)."""
+    return shutil.which("powershell") or shutil.which("pwsh") or "powershell"
+
+
+def ps_file(script):
+    """argv prefix that runs a .ps1 file: unsigned scripts are fine, the user profile is not loaded."""
+    return [powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script]
+
+
+def show_cmd(cmd):
+    """A command line as the user would type it (cmd.exe quoting on Windows, sh quoting elsewhere)."""
+    return subprocess.list2cmdline(cmd) if WIN else " ".join(shlex.quote(x) for x in cmd)
+
+
 def play_cmd(c, new_game=False):
-    a = [os.path.join(WORK, "run.sh")]
+    a = ps_file(os.path.join(WORK, "run.ps1")) if WIN else [os.path.join(WORK, "run.sh")]
     if not new_game and c.getboolean("launch", "skip_tutorial"): a.append("--skip-tutorial")
     if c.getboolean("launch", "debug"): a.append("--debug")
     if c.getboolean("launch", "fullscreen"): a.append("--fullscreen")
@@ -96,7 +117,17 @@ def built_cpu():
     return next((l[4:].strip() for l in _flavor_lines() if l.startswith("cpu=")), None) or None
 
 
+def _win_cpu():
+    """CPU model from the registry (Windows has no /proc/cpuinfo)."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as k:
+            return str(winreg.QueryValueEx(k, "ProcessorNameString")[0]).strip() or None
+    except (ImportError, OSError): return None
+
+
 def current_cpu():
+    if WIN and not os.environ.get("LIFELINE_CPUINFO"): return _win_cpu()
     try:
         with open(os.environ.get("LIFELINE_CPUINFO", "/proc/cpuinfo")) as f:
             return next((l.split(":", 1)[1].strip() for l in f if l.startswith("model name")), None)
@@ -120,7 +151,8 @@ def wanted_flavor(c):
 
 def rebuild_pending(c):
     """True when [build] settings differ from what is installed (only once something is installed)."""
-    if not os.path.isfile(os.path.join(WORK, "lifeline.env")): return False
+    if WIN: return False   # build.ps1 has no [build] options yet (no build-flavor file): nothing to rebuild for
+    if not os.path.isfile(os.path.join(WORK, ENV_FILE)): return False
     have = built_flavor() or "generic"          # builds made before this option were generic
     if have == "generic-fallback": have = "generic" if wanted_flavor(c) == "generic" else "fallback"
     return have != wanted_flavor(c) or cpu_changed()
@@ -132,8 +164,26 @@ def build_env(c):
     return e
 
 
+def _env_json_kit():
+    """KIT recorded by install.ps1 in lifeline.env.json (our repo checkout), or None."""
+    import json
+    try:
+        with open(os.path.join(WORK, "lifeline.env.json"), encoding="utf-8-sig") as f: v = json.load(f).get("KIT")
+    except (OSError, ValueError, AttributeError): return None
+    return v if isinstance(v, str) and v else None
+
+
 def kit_dir(c):
+    """Folder with the build script: steam-machine/ (build.sh) on Linux, windows/ (build.ps1 + install.ps1) on Windows."""
     k = c.get("paths", "kit")
+    if WIN:
+        cands = [k, os.path.join(k, "windows"), os.path.join(os.path.dirname(k), "windows")]
+        rk = _env_json_kit()
+        if rk: cands.append(os.path.join(rk, "windows"))
+        cands.append(os.path.join(HOME, "Lifeline", "src", "lifeline-recomp", "windows"))
+        for cand in cands:
+            if os.path.isfile(os.path.join(cand, "build.ps1")) and os.path.isfile(os.path.join(cand, "install.ps1")): return cand
+        return k
     for cand in (k, os.path.join(HOME, "lifeline-kit", "steam-machine"), os.path.join(HOME, "lifeline-kit", "ourcode", "steam-machine")):
         if os.path.isfile(os.path.join(cand, "build.sh")): return cand
     return k
@@ -193,7 +243,7 @@ class Job:
 def _stream(job, cmd, progress=None, env=None):
     """Run cmd with stderr merged into stdout. With a progress file, show its phase lines while
     running; on failure always show the last lines of the command's own output."""
-    job.log("$ " + " ".join(shlex.quote(x) for x in cmd))
+    job.log("$ " + show_cmd(cmd))
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", env=env)
     seen = len(open(progress, errors="replace").read().splitlines()) if progress and os.path.exists(progress) else 0
     out = []
@@ -240,6 +290,21 @@ def _write_atomic(path, data):
         raise
 
 
+def install_win(job, c, kit, iso):
+    """Windows: build.ps1 (ps2run.exe, lifeline.env.json), then install.ps1 (Vosk, model, voice assets, aliases with this
+    Python (no -PyArgs: powershell -File drops empty arguments), run.ps1, icons, launcher files, launcher-venv only if missing). Same log/progress handling as Linux."""
+    prog = os.path.join(WORK, "build-progress.log")
+    job.log("Building from your ISO (progress: build-progress.log)")
+    if c.getboolean("build", "cpu_tuned"): job.log("Note: cpu_tuned is not applied on Windows yet (build.ps1 builds generic)")
+    if not _stream(job, ps_file(os.path.join(kit, "build.ps1")) + ["-Iso", iso, "-Work", WORK], progress=prog):
+        job.log("build.ps1 failed; full log: " + job.log_path); return False
+    job.log("Installing voice files, run.ps1 and the launcher (install.ps1) ...")
+    if not _stream(job, ps_file(os.path.join(kit, "install.ps1")) + ["-Iso", iso, "-Root", WORK, "-PyExe", sys.executable]):
+        job.log("install.ps1 failed; full log: " + job.log_path); return False
+    job.log("Done.")
+    return True
+
+
 def install(job, c):
     job.open_log("install")
     kit, iso = kit_dir(c), c.get("paths", "iso")
@@ -248,6 +313,7 @@ def install(job, c):
     local = os.path.join(WORK, "voice-assets", "aliases.local.tsv")
     keep = open(local, "rb").read() if os.path.exists(local) else None
     try:
+        if WIN: return install_win(job, c, kit, iso)
         prog = os.path.join(WORK, "build-progress.log")
         job.log("Building from your ISO (progress: build-progress.log, full: build.log)")
         env = build_env(c)
@@ -304,7 +370,7 @@ def download_large(job, c):
         job.log("Checksum OK. Unpacking ...")
         tmpd = os.path.join(d, ".unpack-" + LARGE_MODEL); shutil.rmtree(tmpd, ignore_errors=True)
         try:
-            zipfile.ZipFile(z).extractall(tmpd)
+            with zipfile.ZipFile(z) as zf: zf.extractall(tmpd)   # closed before the .part is removed (Windows locks open files)
             os.replace(os.path.join(tmpd, LARGE_MODEL), os.path.join(d, LARGE_MODEL))
         finally:
             shutil.rmtree(tmpd, ignore_errors=True)
@@ -315,11 +381,11 @@ def download_large(job, c):
 
 # ---------------- UI ----------------
 def menu_items(c):
-    built = os.path.isfile(os.path.join(WORK, "run.sh")) and os.path.isfile(os.path.join(WORK, "lifeline.env"))
+    built = os.path.isfile(os.path.join(WORK, RUN_SCRIPT)) and os.path.isfile(os.path.join(WORK, ENV_FILE))
     m = [("play", "PLAY (continue / memory card)", built), ("new", "New game", built)]
     m += [("launch:" + k, lbl, True) for k, lbl in LAUNCH]
     m += [("qol:" + k, lbl, avail) for k, lbl, kind, avail, _ in QOL]
-    m += [("build:" + k, lbl, True) for k, lbl, _ in BUILD]
+    if not WIN: m += [("build:" + k, lbl, True) for k, lbl, _ in BUILD]   # build.ps1 has no [build] options yet
     m += [("bindings", "Controller bindings", True), ("iso", "ISO", True), ("install", "Install / update from ISO", True),
           ("large", "Download large speech model (~1.8 GB)", True), ("quit", "Quit", True)]
     return m
@@ -389,6 +455,7 @@ def run_ui():
     pygame.init(); pygame.joystick.init()
     full = (os.environ.get("SteamDeck") == "1" or os.environ.get("XDG_CURRENT_DESKTOP") == "gamescope"
             or bool(os.environ.get("GAMESCOPE_WAYLAND_DISPLAY")) or "--fullscreen" in sys.argv)
+    if WIN and os.environ.get("SteamTenfoot") == "1": full = True   # Steam Big Picture on Windows (to verify on the PC)
     scr = pygame.display.set_mode((1280, 800), pygame.FULLSCREEN if full else pygame.RESIZABLE)
     pygame.display.set_caption("Lifeline Recomp Launcher"); pygame.mouse.set_visible(False)
     pads = {}
@@ -416,7 +483,7 @@ def run_ui():
         if key in ("play", "new"):
             pygame.display.quit()
             r = subprocess.call(play_cmd(c, new_game=(key == "new")), env=play_env(c))   # waits for the game
-            msg = "" if r == 0 else "Game exited with code %d (run.sh --debug logs to logs/run-*.log)" % r
+            msg = "" if r == 0 else "Game exited with code %d (%s --debug logs to logs/run-*.log)" % (r, RUN_SCRIPT)
             return "relaunch"   # back to the menu either way (the in-game quit hotkey exits 0)
         if key == "bindings":
             import bindings
@@ -529,7 +596,7 @@ def main(argv=None):
             if missing: print("# defaults in effect (not in config.ini): " + ", ".join("%s.%s = %s" % (sec, k, c.get(sec, k)) for k in missing))
         return 0
     if a.dry_run:
-        print(" ".join(shlex.quote(x) for x in play_cmd(c, a.new_game))); return 0
+        print(show_cmd(play_cmd(c, a.new_game))); return 0
     if not os.path.exists(CFG): save(c)
     return run_ui()
 
