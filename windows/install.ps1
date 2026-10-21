@@ -298,7 +298,8 @@ try {
     }
 
     # --- Step 5: launch config + run.ps1 + shipped icon packs -------------------------------------
-    # lifeline.env.json is shared with build.ps1 (it owns SRC, PS2RUN, ELF); we own the voice keys and ISO.
+    # lifeline.env.json is shared with build.ps1 (it owns SRC, PS2RUN, ELF and KIT); we own the voice keys and ISO, and also
+    # write KIT with the same value (the repo checkout), so an install without a fresh build.ps1 run still records it.
     $envf = Join-Path $Root 'lifeline.env.json'
     $set = @{
         'ISO' = $Iso; 'VOSK_DIR' = $VOSK; 'KIT' = $Kit   # KIT: where the launcher finds windows\build.ps1 + install.ps1
