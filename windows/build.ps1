@@ -87,10 +87,16 @@ $list = [regex]::Match($bsh, '(?s)\nPATCHES=\((.*?)\)').Groups[1].Value
 $Patches = @([regex]::Matches(($list -replace '#[^\n]*', ''), '\d{4}-[A-Za-z0-9._-]+\.patch') | ForEach-Object { $_.Value })
 if ($Patches.Count -lt 1) { Fail 'no PATCHES list found in steam-machine/build.sh' }
 function Try-Native([string]$exe, [string[]]$argv) { $ErrorActionPreference = 'Continue'; & $exe @argv 2>$null | Out-Null; return ($LASTEXITCODE -eq 0) }
-foreach ($p in $Patches) {
-    $pp = Join-Path $OurCode $p
-    if (Try-Native git @('-C', $Src, 'apply', '--reverse', '--check', $pp)) { Write-Host "already applied $p"; continue }
-    if (-not (Try-Native git @('-C', $Src, 'apply', '--index', $pp))) { Fail "$p does not apply to $Src (reset it with git -C `"$Src`" reset --hard and run again)" }
+# Which patches the tree already has: later patches touch the same lines, so (as in patches.sh) only the
+# newest one that reverse-applies is checked; it and every patch before it count as applied.
+$done = -1
+for ($i = $Patches.Count - 1; $i -ge 0; $i--) {
+    if (Try-Native git @('-C', $Src, 'apply', '--reverse', '--check', (Join-Path $OurCode $Patches[$i]))) { $done = $i; break }
+}
+if ($done -ge 0) { Write-Host "patches already applied: $($Patches[0..$done] -join ' ')" } else { Write-Host 'patches already applied: none' }
+for ($i = $done + 1; $i -lt $Patches.Count; $i++) {
+    $p = $Patches[$i]
+    if (-not (Try-Native git @('-C', $Src, 'apply', '--index', (Join-Path $OurCode $p)))) { Fail "$p does not apply to $Src (reset it with git -C `"$Src`" reset --hard and run again)" }
     Write-Host "applied $p"
 }
 if ((& git -C $Src rev-parse HEAD) -ne $Commit) { Fail "unexpected commit in $Src" }
