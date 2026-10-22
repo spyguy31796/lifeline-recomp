@@ -13,6 +13,11 @@ $INSTALL = Join-Path (Join-Path $REPO 'windows') 'install.ps1'
 $T = Join-Path ([IO.Path]::GetTempPath()) ('lifeline-install-test-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 $script:fails = 0; $script:n = 0
 function Check([bool]$c, [string]$what) { $script:n++; if ($c) { Write-Host "ok: $what" } else { $script:fails++; Write-Host "FAIL: $what" } }
+# number of entries in a folder, -1 if it does not exist (a missing folder must be a FAIL line, not a throw)
+function Count-In([string]$p, [switch]$Dirs) {
+    if (-not (Test-Path -LiteralPath $p -PathType Container)) { return -1 }
+    if ($Dirs) { return @(Get-ChildItem -LiteralPath $p -Directory -Force).Count } else { return @(Get-ChildItem -LiteralPath $p -Force).Count }
+}
 function J { $p = $args[0]; foreach ($s in $args[1..($args.Count - 1)]) { $p = Join-Path $p $s }; return $p }
 function W([string]$p, [string]$text) { New-Item -ItemType Directory -Force -Path (Split-Path -Parent $p) | Out-Null; [IO.File]::WriteAllText($p, $text) }
 function Sha([string]$p) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLowerInvariant() }
@@ -24,6 +29,7 @@ function Install([hashtable]$extra) {
     try { & $INSTALL @p *>&1 | ForEach-Object { "    | $_" } | Out-Host } catch { Write-Host "    threw: $($_.Exception.Message)"; return 99 }
     return $LASTEXITCODE
 }
+$sleeper = $null
 try {
     # --- stub kit + upstream (our own dummy files; the three dev-box paths are what the wrapper must swap) ---
     $KIT = J $T 'kit'; $SRC = J $T 'src'
@@ -57,12 +63,15 @@ open(os.path.join(out,'stub1','paths.txt'),'w').write(iso.name + '\n' + out + '\
 import argparse, os, sys
 ap = argparse.ArgumentParser(); ap.add_argument('--assets'); ap.add_argument('--model'); a = ap.parse_args()
 open(os.path.join(a.assets, 'aliases.tsv'), 'w').write('stub\n')
+if os.environ.get('LIFELINE_TEST_ALIASES_DELETE'):
+    os.remove(os.path.join(a.assets, 'aliases.local.tsv'))
 if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     open(os.path.join(a.assets, 'aliases.local.tsv'), 'wb').write(b'CLOBBERED')
     sys.exit(4)
 '@
     Copy-Item -LiteralPath (J $REPO 'voice' 'tools' 'extract_assets.py') -Destination (J $KIT 'voice' 'tools' 'extract_assets.py')   # the real one
     $ROOT = J $T 'game'
+    Check ((Count-In (J $T 'no-such-folder')) -eq -1) 'a missing folder counts as -1 (a FAIL line, not a throw)'
 
     # 1. wrong ISO: refused before anything is written
     $bad = J $T 'bad.iso'; W $bad 'not a disc'
@@ -86,7 +95,7 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     # 3. dry run: real ISO check, but no writes at all
     Check ((Install @{ Root = $ROOT; DryRun = $true }) -eq 0) 'dry run -> exit 0'
     Check (-not (Test-Path $ROOT)) 'dry run -> nothing written'
-    # 4. game running -> refused (a harmless sleeper renamed ps2run; it is left to exit on its own)
+    # 4. game running -> refused (a harmless sleeper renamed ps2run; it exits on its own, or is stopped by its own PID in the finally below)
     $sleeper = $null
     if ($IsLinux -or $IsMacOS) { $exe = J $T 'ps2run'; Copy-Item '/bin/sleep' $exe; $sleeper = Start-Process -FilePath $exe -ArgumentList '6' -PassThru }
     else { $exe = J $T 'ps2run.exe'; Copy-Item (Join-Path $PSHOME 'powershell.exe') $exe -ErrorAction SilentlyContinue
@@ -102,11 +111,11 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     $pins = @{ 'libvosk.dll' = '9331c2f6a32cf77141af27c9750e79532718f51bbc2e3cea3c60f14ca4251e4e'; 'libstdc++-6.dll' = 'a1d96a848a567d7657e152cfe92e2fd62da412968cc11ec8bdb04bf20ebc5747'
                'libgcc_s_seh-1.dll' = '201bf8a54ebb490f93ea4beb20740a483bf67036b90b5720f32d0c746a72d1e9'; 'libwinpthread-1.dll' = '92caeb8a4ea281c674003462a233f3b445b685b0a6f93eb11254feda2dda9cde' }
     foreach ($k in $pins.Keys) { $f = J $ROOT 'vosk' 'vosk' $k; Check ((Test-Path $f) -and (Sha $f) -eq $pins[$k]) "vosk\vosk\$k present with pinned sha256" }
-    Check (@(Get-ChildItem (J $ROOT 'vosk' 'vosk')).Count -eq 4) 'vosk\vosk holds exactly the four DLLs'
+    Check ((Count-In (J $ROOT 'vosk' 'vosk')) -eq 4) 'vosk\vosk holds exactly the four DLLs'
     Check (Test-Path (J $ROOT 'vosk' 'vosk-model-small-en-us-0.15' 'conf' 'model.conf')) 'small model unpacked'
     Check (-not (Test-Path (J $ROOT 'vosk' '.unpack-vosk-model-small-en-us-0.15'))) 'model staging removed'
-    Check (@(Get-ChildItem (J $ROOT 'voice-assets') -Directory).Count -eq 3) 'voice assets extracted via extract_assets.py (3 stub folders)'
-    $paths = [IO.File]::ReadAllLines((J $ROOT 'voice-assets' 'stub1' 'paths.txt'))
+    Check ((Count-In (J $ROOT 'voice-assets') -Dirs) -eq 3) 'voice assets extracted via extract_assets.py (3 stub folders)'
+    $pf = J $ROOT 'voice-assets' 'stub1' 'paths.txt'; $paths = @('', ''); if (Test-Path -LiteralPath $pf) { $paths = [IO.File]::ReadAllLines($pf) }
     Check ($paths[0] -ceq [IO.Path]::GetFullPath($Iso) -and $paths[1] -ceq (J $ROOT 'voice-assets.partial')) "extract_assets.py got the ISO path directly, unchanged: $($paths[0])"
     Check (-not (Test-Path (J $ROOT 'voice-assets.partial'))) 'assets staging renamed away'
     Check (Test-Path (J $ROOT 'voice-assets' 'aliases.tsv')) 'aliases.tsv built'
@@ -135,9 +144,15 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     $after = [IO.File]::ReadAllBytes($local)
     Check (($after.Length -eq $bytes.Length) -and (-not (Compare-Object $after $bytes -SyncWindow 0))) 'aliases.local.tsv restored byte for byte'
     Check (-not (Test-Path "$local.tmp")) 'no restore temp file left'
+    # 6b. aliases.local.tsv deleted by a step: restored through File.Move (the target is gone), still byte for byte
+    $env:LIFELINE_TEST_ALIASES_DELETE = '1'
+    try { $rc = Install @{ Root = $ROOT; SkipVosk = $true } } finally { Remove-Item Env:LIFELINE_TEST_ALIASES_DELETE -ErrorAction SilentlyContinue }
+    $after = if (Test-Path $local) { [IO.File]::ReadAllBytes($local) } else { [byte[]]@() }
+    Check ($rc -eq 0 -and ($after.Length -eq $bytes.Length) -and (-not (Compare-Object $after $bytes -SyncWindow 0))) 'deleted aliases.local.tsv restored byte for byte (Move path)'
+    Check (-not (Test-Path "$local.tmp")) 'no restore temp file left (Move path)'
     $same = $true; foreach ($k in $pins.Keys) { if ((Get-Item (J $ROOT 'vosk' 'vosk' $k)).LastWriteTimeUtc -ne $dllTimes[$k]) { $same = $false } }
     Check $same 'DLLs present -> not rewritten'
-    Check (@(Get-ChildItem (J $ROOT 'voice-assets') -Directory).Count -eq 3) 'voice assets present -> kept'
+    Check ((Count-In (J $ROOT 'voice-assets') -Dirs) -eq 3) 'voice assets present -> kept'
     Check ((([IO.File]::ReadAllText((J $ROOT 'lifeline.env.json')) | ConvertFrom-Json).PS2RUN) -ceq 'C:\Users\<user>\Lifeline\game\ps2-web-recomp\build\native-lifeline\ps2run.exe') 'lifeline.env.json keeps build.ps1 keys (PS2RUN)'
     # 7. one DLL missing -> all four written together
     Remove-Item (J $ROOT 'vosk' 'vosk' 'libgcc_s_seh-1.dll')
@@ -158,7 +173,12 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
         $dry = & $psexe -NoProfile -ExecutionPolicy Bypass -File (J $ROOT 'run.ps1') --dry-run 2>&1 | Out-String
         Check ($dry -match [regex]::Escape('--disc "' + $ren + '"')) 'run.ps1 passes the stored (renamed) ISO path to --disc'
     } else { Write-Host 'skip: cannot make a symlink here (Windows without Developer Mode); renamed-ISO check not run' }
+} catch {
+    # anything unexpected is a FAIL with its line, and the summary below still runs
+    Check $false "test threw at line $($_.InvocationInfo.ScriptLineNumber): $($_.Exception.Message)"
 } finally {
+    # our own ps2run stand-in: normally it has exited by itself; if not, stop exactly it (by its PID), nothing else
+    if ($sleeper -and -not $sleeper.HasExited) { Stop-Process -Id $sleeper.Id -ErrorAction SilentlyContinue; $sleeper.WaitForExit() }
     if ($Keep) { Write-Host "kept $T" } else { Remove-Item -LiteralPath $T -Recurse -Force -ErrorAction SilentlyContinue }
 }
 if ($script:fails) { Write-Host "install.ps1: $($script:fails) of $($script:n) checks FAILED"; exit 1 }

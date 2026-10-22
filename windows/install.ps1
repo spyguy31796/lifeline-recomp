@@ -280,10 +280,16 @@ try {
         $now = $null; if (Test-Path -LiteralPath $LOCAL -PathType Leaf) { $now = [IO.File]::ReadAllBytes($LOCAL) }
         if ($null -eq $now -or -not (Same-Bytes $now $KEEP)) {
             New-Item -ItemType Directory -Force -Path $ASSETS | Out-Null
-            $tmp = "$LOCAL.tmp"; [IO.File]::WriteAllBytes($tmp, $KEEP); Move-Item -LiteralPath $tmp -Destination $LOCAL -Force
+            # atomic: temp file, then File.Replace (no backup: [NullString]::Value, not $null, for PS 5.1) or File.Move if
+            # the target is gone; full paths for every [IO.File] call (.NET does not follow Set-Location)
+            $full = FullPath $LOCAL; $tmp = "$full.tmp"
+            try {
+                [IO.File]::WriteAllBytes($tmp, $KEEP)
+                if ([IO.File]::Exists($full)) { [IO.File]::Replace($tmp, $full, [NullString]::Value) } else { [IO.File]::Move($tmp, $full) }
+            } finally { if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) } }
             Say '  restored aliases.local.tsv'
         }
-        if (-not (Same-Bytes ([IO.File]::ReadAllBytes($LOCAL)) $KEEP)) { Say 'ERROR: aliases.local.tsv could not be restored byte for byte'; exit 1 }
+        if (-not (Same-Bytes ([IO.File]::ReadAllBytes((FullPath $LOCAL))) $KEEP)) { Say 'ERROR: aliases.local.tsv could not be restored byte for byte'; exit 1 }
     }
 }
 if ($DryRun) { Say '== dry run done: nothing was written' }

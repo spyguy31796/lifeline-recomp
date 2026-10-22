@@ -154,7 +154,13 @@ phase vosk
 ASSETS="$WORK/voice-assets"
 if [ ! -d "$ASSETS" ] || [ -z "$(ls -A "$ASSETS")" ]; then
   python3 -I "$SRC/scripts/disc.py" extract "$GAME/disc.iso" "$WORK/iso-meta" OS.FAT > /dev/null
-  python3 "$V/tools/extract_assets.py" "$WORK/iso-meta/OS.FAT" "$(realpath "$GAME/disc.iso")" "$ASSETS"
+  # extract into a staging folder and rename it only when complete, so a half-finished extraction is never
+  # taken for a finished one next time (same as windows/install.ps1)
+  rm -rf "$ASSETS.partial"   # our own leftover from an interrupted run
+  python3 "$V/tools/extract_assets.py" "$WORK/iso-meta/OS.FAT" "$(realpath "$GAME/disc.iso")" "$ASSETS.partial"
+  [ -n "$(ls -A "$ASSETS.partial" 2>/dev/null)" ] || { echo "voice asset extraction wrote nothing" >&2; exit 1; }
+  if [ -d "$ASSETS" ]; then rmdir "$ASSETS"; fi   # empty (checked above)
+  mv "$ASSETS.partial" "$ASSETS"
 fi
 phase "voice assets"
 # --- Launcher config ---------------------------------------------------------
