@@ -155,8 +155,16 @@ function Install-Launcher {
         foreach ($f in $files) {
             $dst = Join-Path $ldir (Split-Path -Leaf $f)
             if ((FullPath $f) -eq (FullPath $dst)) { continue }   # running from the installed copy
-            $tmp = "$dst.tmp"; Copy-Item -LiteralPath $f -Destination $tmp -Force; Move-Item -LiteralPath $tmp -Destination $dst -Force
-            if ((Sha256 $f) -ne (Sha256 $dst)) { Die "verify failed: $dst" }
+            # unchanged -> not rewritten (cmd.exe reads a running launcher.cmd as it goes, so never rewrite it needlessly);
+            # changed -> temp file, then File.Replace ([NullString]::Value: no backup, PS 5.1) or File.Move; full paths
+            $full = FullPath $dst
+            if ([IO.File]::Exists($full) -and (Sha256 $f) -eq (Sha256 $full)) { continue }
+            $tmp = "$full.tmp"
+            try {
+                Copy-Item -LiteralPath $f -Destination $tmp -Force
+                if ([IO.File]::Exists($full)) { [IO.File]::Replace($tmp, $full, [NullString]::Value) } else { [IO.File]::Move($tmp, $full) }
+            } finally { if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) } }
+            if ((Sha256 $f) -ne (Sha256 $full)) { Die "verify failed: $dst" }
         }
         Say "  installed the launcher in $ldir (Steam target: $(Join-Path $ldir 'launcher.cmd'))"
     }

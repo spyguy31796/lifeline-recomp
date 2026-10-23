@@ -2,7 +2,10 @@
 Pester-free checks for windows/install.ps1. Needs YOUR ISO (the real, sha-checked one; it is only hashed and read)
 and Python 3. Uses stub disc.py / arcx.py / fat.py / build_aliases.py (no game data), so no voice assets are really
 extracted; the real Vosk wheel and model are used (downloaded, or pass -WheelPath / -ModelZipPath).
-Everything is written to a fresh temp folder that is removed at the end. Never stops any process.
+Everything is written to a fresh temp folder that is removed at the end. It stops no process except its own
+ps2run stand-in (section 4), and only by that stand-in's PID if it has not exited by itself. A real game must be
+closed: install.ps1 refuses while any ps2run runs (on a shared Linux box, run this in its own PID namespace,
+e.g. unshare -Urpf --mount-proc pwsh ...).
   powershell -NoProfile -ExecutionPolicy Bypass -File windows\tests\test-install.ps1 -Iso "C:\path\to\your.iso"
   pwsh -NoProfile -File windows/tests/test-install.ps1 -Iso /path/to/your.iso -PyExe python3 -PyArgs ' ' -VenvPython /usr/bin/python3
 -VenvPython: a Python 3.10+ to test the real launcher-venv step with (creates a venv in the temp folder and pip-installs
@@ -194,6 +197,12 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     $okf = $true; foreach ($k in $lf.Keys) { $d = J $LDIR $k; if (-not (Test-Path $d) -or (Sha $d) -ne (Sha $lf[$k])) { $okf = $false } }
     Check ($okf -and (Count-In $LDIR) -eq 4) 'launcher files installed byte for byte (4 files, no temp left)'
     Check (-not (Test-Path $VENV)) 'no venv python -> no launcher-venv'
+    # unchanged launcher files are not rewritten (a running launcher.cmd is read as it goes); a changed one is replaced
+    $cmdf = J $LDIR 'launcher.cmd'; $old = [DateTime]::new(2001, 1, 1, 0, 0, 0, [DateTimeKind]::Utc); (Get-Item $cmdf).LastWriteTimeUtc = $old
+    [IO.File]::WriteAllText((J $LDIR 'bindings.py'), '# stale copy')
+    $o = & $INSTALL -Root $ROOT -Iso $Iso -Kit $KIT -Src $SRC -PyExe $PyExe -PyArgs $PyArgs -SkipVosk -VenvPython $noPy *>&1 | Out-String
+    Check ((Get-Item $cmdf).LastWriteTimeUtc -eq $old) 'unchanged launcher.cmd not rewritten on re-install'
+    Check ((Sha (J $LDIR 'bindings.py')) -eq (Sha $lf['bindings.py']) -and (Count-In $LDIR) -eq 4) 'changed bindings.py replaced (File.Replace), no temp left'
     $env:LIFELINE_WORK = $ROOT
     try {
         $o = & $psexe -NoProfile -ExecutionPolicy Bypass -File (J $LDIR 'launcher.ps1') --dry-run 2>&1 | Out-String

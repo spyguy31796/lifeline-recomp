@@ -95,6 +95,10 @@ To move push-to-talk to another button, remap that button to **B** in the Steam 
 pygame's wheel bundles SDL2, so `launcher.sh` creates a per-user venv in `~/lifeline-recomp/launcher-venv`
 on first start (no root; falls back to `pip install --user`). **The first run needs network** so pip can download pygame-ce (classic pygame has no wheel for SteamOS's Python 3.14);
 if both fail it shows an error and the details are in `~/lifeline-recomp/launcher.log`.
+pygame-ce is pinned to 2.5.8 and hash-checked by `windows/launcher-requirements.txt` (the same file the Windows
+installer uses; Install / update copies it next to `launcher.sh`).
+PLAY, New game and Install / update refuse while a `ps2run` process is running ("The game is already running
+(ps2run pid N): close it first"); the launcher only looks (`pgrep -x ps2run`) and never stops the game.
 
 **Controls:** D-pad / left stick = move, **A** = select or toggle, **left/right** = change a value, **START** = play, **B** = back/quit.
 Keyboard works too (arrows, Enter, Esc).

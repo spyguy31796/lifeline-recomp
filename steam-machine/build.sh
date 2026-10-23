@@ -160,7 +160,7 @@ if [ ! -d "$ASSETS" ] || [ -z "$(ls -A "$ASSETS")" ]; then
   python3 "$V/tools/extract_assets.py" "$WORK/iso-meta/OS.FAT" "$(realpath "$GAME/disc.iso")" "$ASSETS.partial"
   [ -n "$(ls -A "$ASSETS.partial" 2>/dev/null)" ] || { echo "voice asset extraction wrote nothing" >&2; exit 1; }
   if [ -d "$ASSETS" ]; then rmdir "$ASSETS"; fi   # empty (checked above)
-  mv "$ASSETS.partial" "$ASSETS"
+  mv -T "$ASSETS.partial" "$ASSETS"   # -T: fail rather than move into an existing folder
 fi
 phase "voice assets"
 # --- Launcher config ---------------------------------------------------------
