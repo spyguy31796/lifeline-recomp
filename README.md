@@ -133,6 +133,9 @@ Run these from the repo checkout in a normal (not elevated) PowerShell or `cmd` 
    Use `-Root` if you passed a different `-Work` to `build.ps1`. Other options: `-Kit`, `-Src`, `-PyExe`/`-PyArgs`,
    `-WheelPath`, `-ModelZipPath`, `-SkipVosk`, `-VenvPython`, `-SkipLauncher`, `-DryRun` (checks only, writes nothing).
    Close the game first: it exits with code 2 while `ps2run` is running and never stops it.
+   Exit codes: 0 ok, 1 failed, 2 game is running, 3 ISO check failed. `-Iso` defaults to
+   `%USERPROFILE%\Downloads\` plus the default ISO file name. The install root must be an ASCII-only path;
+   if your user folder has accented or non-Latin letters, pass `-Root` (and `-Work` to `build.ps1`) with an ASCII path.
 4. **Play** with the launcher: `%USERPROFILE%\Lifeline\game\launcher\launcher.cmd` (or `windows\launcher.cmd` in the
    repo). To start from Steam, add `launcher.cmd` as a non-Steam game. Without the launcher:
    `powershell -NoProfile -ExecutionPolicy Bypass -File %USERPROFILE%\Lifeline\game\run.ps1 [--debug] [--skip-tutorial] [--fullscreen]`.
