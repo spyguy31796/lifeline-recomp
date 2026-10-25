@@ -38,7 +38,7 @@ $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow with
 
 # --- pinned inputs ---------------------------------------------------------------
 $DEFAULT_ISO_NAME = 'Life Line (USA).iso'   # the only place the default ISO file name is defined (-Iso overrides)
-$ISO_SHA256 = 'cb0bebe97770d7964b0c003bae204a610f784bc9611656596af8f6a8265c5d38'   # Alec's verified dump (windows-port-plan.md section 7)
+$ISO_SHA256 = 'cb0bebe97770d7964b0c003bae204a610f784bc9611656596af8f6a8265c5d38'   # sha256 of a verified retail USA dump
 $ISO_SIZE   = 3777593344
 $VOSK_VER   = '0.3.45'
 $WHEEL      = "vosk-$VOSK_VER-py3-none-win_amd64.whl"
