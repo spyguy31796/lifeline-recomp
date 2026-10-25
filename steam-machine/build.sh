@@ -149,8 +149,8 @@ if [ -z "${SKIP_VOSK:-}" ]; then
 fi
 phase vosk
 # --- Voice assets (context/word tables) extracted from YOUR ISO ---------------
-# voice/tools/extract_assets.py runs voice/tools/{fat,arcx}.py with their baked-in dev-box paths
-# swapped for this machine's ISO / OS.FAT / output dir (shared with windows/install.ps1).
+# voice/tools/extract_assets.py runs voice/tools/{fat,arcx}.py with this machine's OS.FAT / ISO / output dir,
+# all passed as arguments (shared with windows/install.ps1).
 ASSETS="$WORK/voice-assets"
 if [ ! -d "$ASSETS" ] || [ -z "$(ls -A "$ASSETS")" ]; then
   python3 -I "$SRC/scripts/disc.py" extract "$GAME/disc.iso" "$WORK/iso-meta" OS.FAT > /dev/null

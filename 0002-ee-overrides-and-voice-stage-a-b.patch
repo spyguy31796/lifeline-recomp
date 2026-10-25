@@ -1,10 +1,10 @@
 EE function override mechanism for ps2-web-recomp (tool-tree part only).
 
 The Lifeline voice module is NOT in this patch. Its single source of truth is
-<repo-root>/ourcode/voice/ (MIT). Build with:
-  eerecomp <elf> --overrides <repo-root>/ourcode/voice/overrides.txt --out generated/<name>
+the voice/ dir of this repo (MIT). Build with:
+  eerecomp <elf> --overrides $V/overrides.txt --out generated/<name>
   cmake ... -DPS2_EXTRA_SOURCES="$V/voice_overrides.cpp;$V/vgp.cpp;$V/result_writer.cpp;$V/null_recognizer.cpp"
-  with V=<repo-root>/ourcode/voice
+  with V=path to the voice/ dir
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index e2c7a79..f23192d 100644
