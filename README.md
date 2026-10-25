@@ -139,6 +139,8 @@ Run these from the repo checkout in a normal (not elevated) PowerShell or `cmd` 
 4. **Play** with the launcher: `%USERPROFILE%\Lifeline\game\launcher\launcher.cmd` (or `windows\launcher.cmd` in the
    repo). To start from Steam, add `launcher.cmd` as a non-Steam game. Without the launcher:
    `powershell -NoProfile -ExecutionPolicy Bypass -File %USERPROFILE%\Lifeline\game\run.ps1 [--debug] [--skip-tutorial] [--fullscreen]`.
+5. **(Optional) Make the skip-tutorial save** (`saves\room001.state` for `--skip-tutorial`), from your own queue file as on Linux:
+   `powershell -NoProfile -ExecutionPolicy Bypass -File windows\make-skip-state.ps1 [-Queue <file>] [-Out <state>] [-Root <dir>] [-StopAt <frame>] [-DryRun]`.
 
 **Mic:** the game records from the Windows **default recording device** (Settings → System → Sound → Input); pick your
 headset there before launching. SDL uses WASAPI (then DirectSound); the chosen device is printed at start (`--debug` saves it in `logs\run-*.log`).
