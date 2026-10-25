@@ -7,8 +7,8 @@ It installs the launcher into <Root>\launcher and creates <Root>\launcher-venv o
 
   powershell -NoProfile -ExecutionPolicy Bypass -File windows\install.ps1 -Iso "C:\path\to\your.iso" [-Root C:\Users\you\Lifeline\game] [-DryRun]
 
-  -Root          install root = build.ps1's -Work (default %USERPROFILE%\Lifeline\game, i.e. C:\Users\<user>\Lifeline\game on
-                 <pc-name>). Must be ASCII-only (Vosk/narrow fopen paths). Never Lifeline\tools or Lifeline\deps.
+  -Root          install root = build.ps1's -Work (default %USERPROFILE%\Lifeline\game, e.g. C:\Users\you\Lifeline\game).
+                 Must be ASCII-only (Vosk/narrow fopen paths). Never Lifeline\tools or Lifeline\deps.
   -Iso           your ISO, any file name; sha256 and size are checked before anything else, and the resolved path is
                  stored as ISO in lifeline.env.json for run.ps1 (default: $DEFAULT_ISO_NAME below, in %USERPROFILE%\Downloads)
   -Kit           our repo checkout (default: the folder above this script)

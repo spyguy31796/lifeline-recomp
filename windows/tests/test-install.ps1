@@ -39,7 +39,7 @@ function Install([hashtable]$extra) {
 }
 $sleeper = $null
 try {
-    # --- stub kit + upstream (our own dummy files; the three dev-box paths are what the wrapper must swap) ---
+    # --- stub kit + upstream (our own dummy files; the stub arcx.extract() records the paths extract_assets.py passes) ---
     $KIT = J $T 'kit'; $SRC = J $T 'src'
     New-Item -ItemType Directory -Force -Path (J $KIT 'windows') | Out-Null
     Copy-Item -LiteralPath (J $REPO 'windows' 'run.ps1') -Destination (J $KIT 'windows' 'run.ps1')
@@ -53,19 +53,21 @@ os.makedirs(dest, exist_ok=True)
 open(os.path.join(dest, sys.argv[4]), 'wb').write(b'stub')
 '@
     W (J $KIT 'voice' 'tools' 'fat.py') @'
-d=open('<repo-root>/private/iso/OS.FAT','rb').read()
-ents=[1,2,3]
-for e in ents: print(e)
+def read_fat(path):
+    assert open(path, 'rb').read() == b'stub'
+    return [1, 2, 3]
 '@
     W (J $KIT 'voice' 'tools' 'arcx.py') @'
-import os,sys
-sys.path.insert(0,os.path.dirname(__file__))
-exec(open(os.path.join(os.path.dirname(__file__),'fat.py')).read().split('for e in ents')[0])
-assert d == b'stub'
-iso=open('<repo-root>/dump/Life Line (USA).iso','rb')
-out='<repo-root>/private/asr_files'; os.makedirs(out,exist_ok=True)
-for e in ents: os.makedirs(os.path.join(out,'stub%d' % e), exist_ok=True)
-open(os.path.join(out,'stub1','paths.txt'),'w').write(iso.name + '\n' + out + '\n')
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from fat import read_fat
+def extract(fat_path, iso_path, out_dir):
+    ents = read_fat(fat_path)
+    open(iso_path, 'rb').close()
+    os.makedirs(out_dir, exist_ok=True)
+    for e in ents: os.makedirs(os.path.join(out_dir, 'stub%d' % e), exist_ok=True)
+    open(os.path.join(out_dir, 'stub1', 'paths.txt'), 'w').write(iso_path + '\n' + out_dir + '\n')
+    return []
 '@
     W (J $KIT 'voice' 'tools' 'build_aliases.py') @'
 import argparse, os, sys
@@ -146,7 +148,7 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     $local = J $ROOT 'voice-assets' 'aliases.local.tsv'
     $bytes = [byte[]](0xEF, 0xBB, 0xBF) + [Text.Encoding]::ASCII.GetBytes("# my fixes`r`nword`tother words`r`n")
     [IO.File]::WriteAllBytes($local, $bytes)
-    $ej | Add-Member -NotePropertyName PS2RUN -NotePropertyValue 'C:\Users\<user>\Lifeline\game\ps2-web-recomp\build\native-lifeline\ps2run.exe' -Force   # as build.ps1 writes it
+    $ej | Add-Member -NotePropertyName PS2RUN -NotePropertyValue 'C:\Users\you\Lifeline\game\ps2-web-recomp\build\native-lifeline\ps2run.exe' -Force   # as build.ps1 writes it
     [IO.File]::WriteAllText((J $ROOT 'lifeline.env.json'), ($ej | ConvertTo-Json))
     $dllTimes = @{}; foreach ($k in $pins.Keys) { $dllTimes[$k] = (Get-Item (J $ROOT 'vosk' 'vosk' $k)).LastWriteTimeUtc }
     $env:LIFELINE_TEST_ALIASES_FAIL = '1'
@@ -164,7 +166,7 @@ if os.environ.get('LIFELINE_TEST_ALIASES_FAIL'):
     $same = $true; foreach ($k in $pins.Keys) { if ((Get-Item (J $ROOT 'vosk' 'vosk' $k)).LastWriteTimeUtc -ne $dllTimes[$k]) { $same = $false } }
     Check $same 'DLLs present -> not rewritten'
     Check ((Count-In (J $ROOT 'voice-assets') -Dirs) -eq 3) 'voice assets present -> kept'
-    Check ((([IO.File]::ReadAllText((J $ROOT 'lifeline.env.json')) | ConvertFrom-Json).PS2RUN) -ceq 'C:\Users\<user>\Lifeline\game\ps2-web-recomp\build\native-lifeline\ps2run.exe') 'lifeline.env.json keeps build.ps1 keys (PS2RUN)'
+    Check ((([IO.File]::ReadAllText((J $ROOT 'lifeline.env.json')) | ConvertFrom-Json).PS2RUN) -ceq 'C:\Users\you\Lifeline\game\ps2-web-recomp\build\native-lifeline\ps2run.exe') 'lifeline.env.json keeps build.ps1 keys (PS2RUN)'
     # 7. one DLL missing -> all four written together
     Remove-Item (J $ROOT 'vosk' 'vosk' 'libgcc_s_seh-1.dll')
     $old = [DateTime]::new(2001, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)   # extraction keeps the zip's own times, so mark the survivors

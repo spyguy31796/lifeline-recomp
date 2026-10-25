@@ -1,6 +1,6 @@
 # Lifeline Recomp
 
-A native Linux (SteamOS first) build of **Lifeline** (Konami, PS2, 2004), the voice-controlled survival horror game,
+A native Linux (SteamOS first) and Windows build of **Lifeline** (Konami, PS2, 2004), the voice-controlled survival horror game,
 made by static recompilation with [ps2-web-recomp](https://github.com/snuri00/ps2-web-recomp). The game's old USB-headset
 recognizer is replaced with an offline [Vosk](https://alphacephei.com/vosk/) recognizer that listens to any mic, plus
 quality-of-life fixes.
@@ -89,6 +89,57 @@ All commands run in Desktop Mode → Konsole as your normal user. Nothing needs 
 Desktop Mode → Steam → *Games → Add a Non-Steam Game to My Library* → *Browse* → pick `~/lifeline-recomp/run.sh` → Add.
 In the shortcut's *Properties*, rename it "Lifeline" and add launch options such as `--skip-tutorial --fullscreen`.
 To move push-to-talk to another button, remap that button to **B** in the Steam controller layout.
+
+## Windows
+The same game build also runs natively on Windows 10/11 x64 (tested on Windows 11 with an NVIDIA GPU). The Windows scripts
+are in `windows/`; they work at user level only (nothing system-wide is changed, and PATH is set for the build process
+only). The bring-your-own-disc rules above apply unchanged: everything game-derived is made on your PC and stays there.
+
+### Requirements (Windows)
+Put the tools and libraries in these default places (each one can be overridden with the `build.ps1` parameter shown);
+`<Root>` is `%USERPROFILE%\Lifeline`:
+- **Visual Studio 2022 Build Tools** with the C++ workload (MSVC STL, Windows SDK, `vcvars64.bat`, and the CMake + Ninja
+  that ship with it). `build.ps1` finds it with `vswhere` and runs `vcvars64` for its own process only.
+- **LLVM for Windows** (`clang-cl`, `lld-link`): `<Root>\tools\llvm` (`-Llvm`).
+- **wgpu-native** Windows release (`wgpu-windows-x86_64-msvc-release`): `<Root>\deps\wgpu-native` (`-Wgpu`).
+- **SDL2** VC development package (`SDL2-devel-2.x-VC`): `<Root>\deps\SDL2-*`, the newest folder is used (`-Sdl2`).
+- **Python 3.10+**: `<Root>\tools\python312\python.exe` (`-Python`), e.g. a standalone Python 3.12. `install.ps1` also
+  runs the stdlib-only voice tools with it (falls back to `py -3` with a warning) and creates the launcher's venv from it.
+- **git**, a GPU that wgpu-native supports, a microphone and a controller.
+- Internet for the first build and install (upstream source, the Vosk wheel and model, `pygame-ce` for the launcher).
+
+`build.ps1` does not download these tools; `install.ps1` downloads the Vosk files and `pygame-ce` itself (all pinned and sha256-checked).
+
+### Install (Windows)
+Run these from the repo checkout in a normal (not elevated) PowerShell or `cmd` window:
+
+1. **Dump your disc** to an ISO with your own drive.
+2. **Build** `ps2run.exe` (clones `snuri00/ps2-web-recomp` at the pinned commit, applies the same patches as `build.sh`,
+   recompiles your disc's executable and links in `voice/`, `input/`, `icons/`, `widescreen/` and `fmv/`):
+   ```bat
+   powershell -NoProfile -ExecutionPolicy Bypass -File windows\build.ps1 -Iso "C:\path\to\your.iso"
+   ```
+   Output goes to `-Work` (default `%USERPROFILE%\Lifeline\game`); progress is in `build-progress.log` there.
+   Optional: `-Root`, `-Work`, `-Llvm`, `-Wgpu`, `-Sdl2`, `-Python`, `-IsoSha256` (refuse an ISO with another sha256).
+3. **Install** the voice parts and the launcher:
+   ```bat
+   powershell -NoProfile -ExecutionPolicy Bypass -File windows\install.ps1 -Iso "C:\path\to\your.iso"
+   ```
+   It downloads Vosk 0.3.45 (`libvosk.dll` and its three runtime DLLs from the PyPI win_amd64 wheel) and the
+   `vosk-model-small-en-us-0.15` model, extracts the voice phrase tables from your ISO into `voice-assets\`, builds the
+   spoken-form aliases, writes `run.ps1` and `lifeline.env.json`, copies the launcher into `<Work>\launcher\` and creates
+   `launcher-venv` (pinned, hash-checked `pygame-ce`).
+   `install.ps1` only accepts the tested NTSC-U dump: the ISO's size and sha256 must match, anything else is refused.
+   Use `-Root` if you passed a different `-Work` to `build.ps1`. Other options: `-Kit`, `-Src`, `-PyExe`/`-PyArgs`,
+   `-WheelPath`, `-ModelZipPath`, `-SkipVosk`, `-VenvPython`, `-SkipLauncher`, `-DryRun` (checks only, writes nothing).
+   Close the game first: it exits with code 2 while `ps2run` is running and never stops it.
+4. **Play** with the launcher: `%USERPROFILE%\Lifeline\game\launcher\launcher.cmd` (or `windows\launcher.cmd` in the
+   repo). To start from Steam, add `launcher.cmd` as a non-Steam game. Without the launcher:
+   `powershell -NoProfile -ExecutionPolicy Bypass -File %USERPROFILE%\Lifeline\game\run.ps1 [--debug] [--skip-tutorial] [--fullscreen]`.
+
+**Mic:** the game records from the Windows **default recording device** (Settings → System → Sound → Input); pick your
+headset there before launching. SDL uses WASAPI (then DirectSound); the chosen device is printed at start (`--debug` saves it in `logs\run-*.log`).
+Push-to-talk and the hotkeys are the same as on Linux.
 
 ## Launcher (controller-friendly installer + QoL toggles)
 `steam-machine/launcher/` is a small Python + pygame app that works with a controller in SteamOS Game Mode.
@@ -355,7 +406,7 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 - A misheard word can still map to a different command that's valid in the current room.
 - The loose matching only applies when Vosk is fairly confident (confidence ≥ 6000); otherwise you need closer wording.
 - Words are not checked for meaning together, so an odd verb + object pair can be accepted if both exist in the room.
-- Only the NTSC-U disc (SLUS_208.48) is supported. Linux only for now.
+- Only the NTSC-U disc (SLUS_208.48) is supported. Linux (x86_64) and Windows (x64) only.
 - If no mic is selected, SDL records from a silent null device and nothing is heard; reconnect the headset and pick it as input.
 - VU microcode is interpreted, so performance depends on the CPU.
 
@@ -389,7 +440,7 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `0001-usbmic-hle-and-deci2-nohost.patch` | Patch for ps2-web-recomp: USB mic HLE and DECI2 no-host |
 | `0002-ee-overrides-and-voice-stage-a-b.patch` | Patch for ps2-web-recomp: EE function overrides and voice module hooks |
 | `voice/` | Voice module that replaces the original recognizer (Vosk backend, SDL mic, phrase-table reader, natural-sentence matcher) |
-| `voice/tools/` | `fat.py` / `arcx.py` extract the phrase tables from your ISO; `build_aliases.py` builds the local alias table |
+| `voice/tools/` | `fat.py` / `arcx.py` (paths as arguments or `LIFELINE_FAT` / `LIFELINE_ISO` / `LIFELINE_ASSETS_OUT`) and `extract_assets.py` extract the phrase tables from your ISO; `build_aliases.py` builds the local alias table |
 | `steam-machine/` | `build.sh` (+ `patches.sh`), `run.sh`, `make-skip-state.sh`, `vu-check.sh` and kit notes |
 | `0003-input-remap-hook.patch` | Patch for ps2-web-recomp: weak hook that lets `input/` remap the controller |
 | `0004-audio-buffer-and-perf-log.patch` | Patch for ps2-web-recomp: configurable audio pacing buffer, underrun counter, `[perf]` log line |
@@ -408,7 +459,8 @@ and `LIFELINE_PRINT_ENV=1 ~/lifeline-recomp/run.sh` prints the environment run.s
 | `steam-machine/cpu_flags.sh` | CPU-tuned build flags (`[build] cpu_tuned`) with generic fallback; test in `steam-machine/tests/` |
 | `0012-windows-build.patch` | Patch for ps2-web-recomp: Windows build (Win32 window handle for the WebGPU surface, Windows process stats for the perf log, CMake for the Windows wgpu-native/SDL2 packages and clang-cl, 16 MB thread stacks); no effect on Linux |
 | `windows/install.ps1` | Windows voice install (Vosk, model, voice assets, aliases, `run.ps1`). It accepts only the verified dump: sha256 and size must match the tested image, anything else is refused. The Linux `build.sh` accepts any ISO you pass |
-| `windows/build.ps1` | Windows build core (work in progress, voice not yet ported): clang-cl + lld-link + Ninja in a per-process VS dev environment, same pinned upstream and patch list as `build.sh` |
+| `windows/build.ps1` | Windows build: clang-cl + lld-link + Ninja in a per-process VS dev environment, same pinned upstream and patch list as `build.sh` (voice download/extraction is in `install.ps1`) |
+| `windows/launcher.cmd`, `launcher.ps1`, `run.ps1` | Windows launcher entry point (Steam target), its PowerShell runner, and the game start script (twin of `run.sh`) |
 
 ## License
 Our code is MIT (see `LICENSE`). ps2-web-recomp is MIT and is not vendored: `build.sh` clones it and applies our patches.
